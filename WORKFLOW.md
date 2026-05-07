@@ -61,6 +61,7 @@ Use the SKILL.md decision tree to map the user's stated problem to ONE primary r
 | "Installs going Organic / paid spend wasted" | `att-timing-and-events.md` | `adattributionkit-and-skan.md` (fallback layer) |
 | "Events disappeared / dashboard shows half" | `consent-gating.md` | `att-timing-and-events.md` (Defense 2) |
 | "Meta AEM / ATE / Facebook events" | `meta-aem-troubleshoot.md` | `consent-gating.md` (FB AppEvents silent-drop) |
+| "TikTok SDK init / SKAN ownership" | `tiktok-integration.md` | `consent-gating.md` (post-ATT enable) |
 | "Apple Ads showing Organic" | `apple-ads-audit.md` (AdServices section) | `adattributionkit-and-skan.md` |
 | "SKAN postback empty / weird CVs" | `adattributionkit-and-skan.md` | — |
 | "Should we prompt ATT now or later" | `consent-gating.md` (Pre-permission) | `att-timing-and-events.md` (When to prompt) |
@@ -120,7 +121,7 @@ Three modes depending on user request:
 
 ### Mode B: Recommendation (user wants advice, not edits)
 
-1. Produce a concrete patch description: "in `MuviConfig/Adjust/AdjustConfiguration.swift:689`, change `config?.attConsentWaitingInterval = 120` to `config?.attConsentWaitingInterval = 120` AND add `config?.enableFirstSessionDelay()` immediately after"
+1. Produce a concrete patch description: "in `Config/Adjust/AdjustConfiguration.swift:689`, change `config?.attConsentWaitingInterval = 120` to `config?.attConsentWaitingInterval = 120` AND add `config?.enableFirstSessionDelay()` immediately after"
 2. Show what behavior the patch fixes (e.g., "splash_view event no longer fires before ATT resolves")
 3. Provide verification steps for them to run after applying
 

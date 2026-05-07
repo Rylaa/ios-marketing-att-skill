@@ -19,7 +19,18 @@ Walk through this BEFORE first paid UA spend. Each unchecked item is a future "w
     <!-- Add ALL ad networks you may use; MMPs maintain master lists -->
 </array>
 
+<!-- Required for SKAN postback COPIES to MMP/your server (top-level key) -->
+<!-- ⚠️ Different from AdAttributionKit > AttributionCopyEndpoint below. -->
+<!-- ⚠️ ONLY ONE value allowed. Last writer wins → set to MMP OR custom, not both. -->
+<key>NSAdvertisingAttributionReportEndpoint</key>
+<string>https://adjust-skadnetwork.com/</string>
+<!-- Adjust:     https://adjust-skadnetwork.com/        -->
+<!-- AppsFlyer:  https://appsflyer-skadnetwork.com/     -->
+<!-- Branch:     check Branch's docs                    -->
+<!-- Singular:   check Singular's docs                  -->
+
 <!-- Required for AdAttributionKit (iOS 17.4+) -->
+<!-- AttributionCopyEndpoint below is AAK-specific — separate from the SKAN key above. -->
 <key>AdAttributionKit</key>
 <dict>
     <key>AttributionCopyEndpoint</key>
@@ -38,8 +49,12 @@ Walk through this BEFORE first paid UA spend. Each unchecked item is a future "w
 
 - [ ] `NSUserTrackingUsageDescription` present, specific (not vague), under 200 chars
 - [ ] `SKAdNetworkItems` populated with full master list (50-100 entries typical)
+- [ ] `NSAdvertisingAttributionReportEndpoint` set (SKAN postback copies to MMP/your server) — see `adattributionkit-and-skan.md` for provider URL table
+  - [ ] Only ONE value present (Apple plist only allows one — the LAST one wins, so a stale custom URL silently breaks MMP postback copies, or vice versa)
+  - [ ] If using an MMP: value matches that MMP's published endpoint (Adjust → `https://adjust-skadnetwork.com/`, AppsFlyer → `https://appsflyer-skadnetwork.com/`, Branch/Singular → check their docs)
+  - [ ] Without this key: Apple sends SKAN postbacks ONLY to the ad network — your MMP cannot verify postbacks server-side
 - [ ] `AdAttributionKit` block present if targeting iOS 17.4+
-- [ ] `AttributionCopyEndpoint` HTTPS-only with valid TLS cert
+- [ ] `AttributionCopyEndpoint` (AAK-specific, inside `AdAttributionKit` dict — DIFFERENT from `NSAdvertisingAttributionReportEndpoint` above) HTTPS-only with valid TLS cert
 - [ ] If using Apple Search Ads: `AdServices.framework` linked
 
 ## Phase 2 — Privacy Manifest (PrivacyInfo.xcprivacy)

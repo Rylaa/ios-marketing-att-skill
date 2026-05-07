@@ -6,8 +6,9 @@ Meta's iOS attribution is its own beast. AEM (Aggregated Event Measurement) is M
 
 - **Aggregated Event Measurement** — Meta's privacy-preserving event measurement for iOS users who decline ATT
 - Replaces deterministic Pixel/SDK-based attribution for ATT-denied users
-- Mandates **8-event prioritization** per domain/app — only 8 events configured in Events Manager will report from ATT-denied users
+- As of June 2025, Meta auto-aggregates all eligible events — no 8-event cap, no manual prioritization, Value Optimization sums all eligible value events automatically
 - Postbacks are Meta-proprietary, NOT raw SKAN postbacks
+- AEM MAI (Mobile App Install) works automatically on Meta Ads Manager. AEM MAE (Mobile App Re-Engagement) still requires a verified deep link.
 
 ## Prerequisites Checklist (Most Common Failure: Skipping These)
 
@@ -31,35 +32,11 @@ Business Settings → Brand Safety → Domains → Verify your primary domain vi
 
 This is the silent killer. Without verified domain, AEM events from your web→app flow drop silently.
 
-### 5. Configure the 8-event hierarchy in Events Manager
+### 5. AEM auto-aggregates — no manual config
 
-Events Manager → your app → Aggregated Event Measurement → Manage Events → drag 8 events into priority order.
+As of June 2025, Meta retired the standalone AEM configuration UI. AEM now auto-aggregates all eligible events; there is no 8-event cap, no priority drag-and-drop, and Value Optimization sums all eligible value events automatically.
 
-**Order matters.** When a user does multiple events, only the highest-priority one reports. Typical priority for sub apps:
-
-```
-1. Subscribe          (highest LTV signal)
-2. StartTrial
-3. Purchase
-4. AddPaymentInfo
-5. CompleteRegistration
-6. Lead / SubmitApplication
-7. AddToCart
-8. ViewContent
-```
-
-For non-sub apps (e-commerce):
-
-```
-1. Purchase
-2. AddPaymentInfo
-3. InitiateCheckout
-4. AddToCart
-5. CompleteRegistration
-6. Lead
-7. ViewContent
-8. Search
-```
+Verify events are flowing via Events Manager → your app → **Test Events** tab (not "Manage Events" — that surface is gone).
 
 ### 6. App must have install volume
 
@@ -87,9 +64,11 @@ This is the most common setup. Walkthrough:
 
 1. Events Manager → your app → Aggregated Event Measurement → expect to see events flowing within 24-72h
 2. If "AEM not selectable" in Ads Manager campaign creation:
-   - **Cause A:** event hierarchy not configured (see prerequisite #5)
+   - **Cause A (most common):** no events received yet — Meta won't show AEM until the first event arrives. Install events count; give it 48h and verify via Test Events tab.
    - **Cause B:** app not associated with ad account (prerequisite #3)
-   - **Cause C:** no events received yet (Meta won't show AEM until first event arrives — install events count, give it 48h)
+   - **Cause C:** MAE (re-engagement) campaigns require a verified deep link — MAI (install) campaigns do not.
+
+> **Historical context:** Pre-June 2025, AEM required configuring an 8-event priority hierarchy in Events Manager → Manage Events. Meta retired that flow and the standalone AEM config UI; aggregation is now automatic. Old Stack Overflow answers, AppsFlyer/Adjust docs, and blog posts that walk you through "drag 8 events into priority order" are stale — ignore them.
 
 ### CUID (Customer User ID) — Necessary?
 

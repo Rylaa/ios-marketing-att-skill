@@ -6,10 +6,12 @@ Once ATT resolves, every marketing SDK must do something different per state. Sk
 
 | State | AppsFlyer | Adjust | Meta SDK | Firebase Analytics | AdMob | Crashlytics |
 |---|---|---|---|---|---|---|
-| `.authorized` | `start()` full | `appDidLaunch` full | `Settings.isAdvertiserTrackingEnabled = true` | `setAnalyticsCollectionEnabled(true)` | `setRequestConfiguration` with personalized ads | `setCrashlyticsCollectionEnabled(true)` (independent) |
-| `.denied` | `start()` (SKAN-only mode auto) | `appDidLaunch` (SKAN auto) | `Settings.isAdvertiserTrackingEnabled = false` + AEM-only | `setAnalyticsCollectionEnabled(true)` (own consent) | non-personalized ads | unchanged |
-| `.notDetermined` | **DO NOT START** until resolved | **DO NOT START** until resolved | `isAdvertiserTrackingEnabled = false` | own consent flag | non-personalized | unchanged |
-| `.restricted` | `start()` SKAN-only | `appDidLaunch` SKAN-only | tracking off | own consent | non-personalized | unchanged |
+| `.authorized` | `start()` full | `appDidLaunch` full | (iOS <17 only) `Settings.isAdvertiserTrackingEnabled = true` | `setAnalyticsCollectionEnabled(true)` | `setRequestConfiguration` with personalized ads | `setCrashlyticsCollectionEnabled(true)` (independent) |
+| `.denied` | `start()` (SKAN-only mode auto) | `appDidLaunch` (SKAN auto) | (iOS <17 only) `Settings.isAdvertiserTrackingEnabled = false`; AEM-only | `setAnalyticsCollectionEnabled(true)` (own consent) | non-personalized ads | unchanged |
+| `.notDetermined` | **DO NOT START** until resolved | **DO NOT START** until resolved | (iOS <17 only) `Settings.isAdvertiserTrackingEnabled = false` | own consent flag | non-personalized | unchanged |
+| `.restricted` | `start()` SKAN-only | `appDidLaunch` SKAN-only | (iOS <17 only) tracking off | own consent | non-personalized | unchanged |
+
+**iOS 17+ note:** On iOS 17+, the Meta SDK reads `ATTrackingManager.trackingAuthorizationStatus` automatically. The `Settings.shared.isAdvertiserTrackingEnabled` setter is deprecated and a no-op. Wrap legacy calls in `if #unavailable(iOS 17) { ... }`.
 
 **Critical:** Crashlytics + Firebase Analytics consent is **independent** from ATT. ATT governs cross-app tracking. Analytics/crash are first-party — your privacy policy + in-app consent gate them, not ATT.
 
@@ -77,6 +79,8 @@ App Review hard-rejects vague descriptions ("for advertising", "to track you"). 
 
 ## SDK Initialization — The "Consent Gate" Pattern
 
+**iOS 17+ behavior change:** Apple deprecated the Meta SDK's `Settings.shared.isAdvertiserTrackingEnabled` setter on iOS 17+. The SDK now reads `ATTrackingManager.trackingAuthorizationStatus` directly, so calling the setter is a no-op. Keep the legacy assignments behind `if #unavailable(iOS 17) { ... }` so older OS versions still get the explicit toggle without compiler warnings or wasted runtime work on modern devices.
+
 ```swift
 @MainActor
 final class MarketingStack {
@@ -108,8 +112,10 @@ final class MarketingStack {
         AppsFlyerLib.shared().start()
 
         // Meta SDK
-        Settings.shared.isAdvertiserTrackingEnabled = true
-        Settings.shared.isAdvertiserIDCollectionEnabled = true
+        if #unavailable(iOS 17) {
+            Settings.shared.isAdvertiserTrackingEnabled = true
+            Settings.shared.isAdvertiserIDCollectionEnabled = true
+        }
         ApplicationDelegate.shared.application(
             UIApplication.shared,
             didFinishLaunchingWithOptions: nil
@@ -128,7 +134,9 @@ final class MarketingStack {
         AppsFlyerLib.shared().start()  // SKAN-only postbacks
 
         // Meta — disable cross-app tracking, but AEM still works server-side
-        Settings.shared.isAdvertiserTrackingEnabled = false
+        if #unavailable(iOS 17) {
+            Settings.shared.isAdvertiserTrackingEnabled = false
+        }
 
         // Firebase Analytics (still own consent)
         if userConsentedToAnalytics {
@@ -151,6 +159,7 @@ Meta SDK has a code path where `isAdvertiserTrackingEnabled = false` causes `App
 ```swift
 // ❌ BAD — silent drop on denied users
 Settings.shared.isAdvertiserTrackingEnabled = (status == .authorized)
+// On iOS 17+ this line is a no-op; the issue is still real because the SDK auto-reads ATT and silently drops
 AppEvents.shared.logEvent(.viewedContent)  // dropped if denied, no log
 ```
 
@@ -163,7 +172,7 @@ func logMarketingEvent(_ event: MarketingEvent) {
     BackendClient.shared.logEvent(event)
 
     // 2. Best-effort to Meta SDK (works only if ATT authorized)
-    if Settings.shared.isAdvertiserTrackingEnabled {
+    if ATTrackingManager.trackingAuthorizationStatus == .authorized {
         AppEvents.shared.logEvent(event.metaName, parameters: event.metaParams)
     }
 }

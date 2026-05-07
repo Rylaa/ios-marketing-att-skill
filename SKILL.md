@@ -22,7 +22,7 @@ description: >-
 license: MIT
 metadata:
   author: Rylaa
-  version: "1.1.0"
+  version: "1.2.0"
   created: "2026-05-07"
   updated: "2026-05-07"
   domain: mobile-marketing
@@ -68,7 +68,13 @@ What is the user asking?
 ├─ "Meta AEM not visible / ATE verification error / Meta + AppsFlyer setup"
 │   └─→ references/meta-aem-troubleshoot.md
 │       Cover: domain verification, app status prerequisites, CUID role,
-│       AEM 8-event prioritization, ATE postback debug, RN/Expo gotchas
+│       ATE postback debug, RN/Expo gotchas, AEM auto-aggregation (post Jun 2025)
+│
+├─ "TikTok ad attribution / SKAN ownership / TikTok SDK init"
+│   └─→ references/tiktok-integration.md
+│       Cover: TikTokBusinessSDK init, disableSKAdNetworkSupport(),
+│       suppressAppTrackingDialog(), SKAN ownership decision matrix,
+│       hybrid MMP+SDK setup, Events API S2S
 │
 ├─ "ATT prompt design / consent flow / SDK gating"
 │   └─→ references/consent-gating.md

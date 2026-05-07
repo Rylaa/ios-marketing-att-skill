@@ -179,9 +179,42 @@ Benefits:
 
 For iOS 17.4-17.x compatibility, keep using the older `updateConversionValue(value, coarseConversionValue:, lockPostback:)` signature.
 
-## AttributionCopyEndpoint (Server-side Postback Mirror)
+## Postback Copy Endpoints — SKAN vs AAK (Two Different Keys)
 
-By default, AAK postbacks go to ad network only. Add this Info.plist key to also receive a copy on YOUR server — critical for MMP setups and your own analytics:
+By default, **both** SKAN and AAK postbacks go to the ad network ONLY. To also receive copies on YOUR server (or your MMP), you need to set the right Info.plist key — and SKAN and AAK use DIFFERENT keys. They are not interchangeable; both should be configured if you support both frameworks.
+
+| Framework | Info.plist key | Location in plist | Allowed values |
+|---|---|---|---|
+| SKAdNetwork (SKAN) | `NSAdvertisingAttributionReportEndpoint` | top-level | exactly ONE URL |
+| AdAttributionKit (AAK) | `AttributionCopyEndpoint` | inside `AdAttributionKit` dict | one URL |
+
+### NSAdvertisingAttributionReportEndpoint (SKAN Postback Mirror)
+
+Top-level Info.plist key. This is how Apple knows where to send a SECOND copy of every SKAN postback (the first copy always goes to the ad network).
+
+```xml
+<key>NSAdvertisingAttributionReportEndpoint</key>
+<string>https://adjust-skadnetwork.com/</string>
+```
+
+**Critical rules:**
+
+- **ONLY ONE value allowed.** This is a single string, not an array. If you set both an MMP endpoint AND a custom server endpoint, only the LAST one wins → the other entity loses postback copies entirely.
+- **Without this key**, Apple sends SKAN postbacks ONLY to the ad network — your MMP has no way to verify postbacks server-side, and your own analytics will never see them.
+- **Pick one:** either point at your MMP (most common) OR your own server. If you need both, you have to chain — let your MMP receive copies, then forward to you.
+
+| MMP | NSAdvertisingAttributionReportEndpoint value |
+|---|---|
+| Adjust | `https://adjust-skadnetwork.com/` |
+| AppsFlyer | `https://appsflyer-skadnetwork.com/` |
+| Branch | (check Branch docs) |
+| Singular | (check Singular docs) |
+
+Apple appends the postback path automatically — set the base URL exactly as the MMP publishes it (trailing slash matters for some providers).
+
+### AttributionCopyEndpoint (AAK Postback Mirror)
+
+Separate key, separate mechanism — AAK-specific, set INSIDE the `AdAttributionKit` dict. Receives copies of AAK postbacks (NOT SKAN postbacks). If you want copies of both SKAN and AAK postbacks, you must configure BOTH keys.
 
 ```xml
 <key>AdAttributionKit</key>

@@ -94,6 +94,7 @@ marketing-att-pipeline/
 │   ├── meta-aem-troubleshoot.md       Prerequisites + ATE error + extinfo 16-pos
 │   ├── apple-ads-audit.md             ASA Health Score + AdServices API + Maximize Conv
 │   ├── pre-launch-checklist.md        10-phase pre-paid-UA checklist
+│   ├── tiktok-integration.md          TikTok Business SDK + SKAN ownership matrix
 │   └── symptom-to-cause.md            Vague-symptom triage table
 └── scripts/
     └── diagnose.sh                    12-check static analysis pass
@@ -451,16 +452,16 @@ These production incidents are what differentiate this skill from a "merge of th
 
 ## Roadmap / Known Limitations
 
-This skill is at v1.1.0. Known follow-up work:
+This skill is at v1.2.0. Recent work:
 
-### Documented but not yet patched
+### Resolved in v1.2.0
 
-- **Meta AEM 8-event hierarchy** is OUTDATED in current text — Meta removed manual prioritization in June 2025. The `meta-aem-troubleshoot.md` file still discusses the old 8-event flow. To be replaced with "AEM auto-aggregates; verify via Test Events tab."
-- **`Settings.shared.isAdvertiserTrackingEnabled` is deprecated on iOS 17+** — current code samples in `consent-gating.md` set it unconditionally. To be wrapped in `if #unavailable(iOS 17) { ... }`.
-- **`NSAdvertisingAttributionReportEndpoint` plist key** is missing from `pre-launch-checklist.md`. This is a critical SKAN postback-copy key (only ONE value allowed, Adjust = `https://adjust-skadnetwork.com/`, AppsFlyer = `https://appsflyer-skadnetwork.com/`).
-- **TikTok integration** is sparse — currently only mentioned in tables. A full `references/tiktok-integration.md` is planned with `disableSKAdNetworkSupport()`, `suppressAppTrackingDialog()`, SKAN ownership decision matrix.
+- ✅ **Meta AEM 8-event hierarchy** — replaced with auto-aggregate guidance (Meta retired manual prioritization in June 2025)
+- ✅ **`Settings.shared.isAdvertiserTrackingEnabled` iOS 17+ deprecation** — wrapped in `if #unavailable(iOS 17) { ... }` blocks
+- ✅ **`NSAdvertisingAttributionReportEndpoint` plist key** — added to pre-launch checklist + AAK reference with provider URL table (Adjust, AppsFlyer, Branch, Singular)
+- ✅ **TikTok integration** — new dedicated `references/tiktok-integration.md` with full init, SKAN ownership decision matrix, hybrid MMP+SDK setup
 
-### Possible v1.2 additions
+### Possible v1.3 additions
 
 - Branch.io specific gotchas (`branch_referrable` flag, deferred deep link sandbox)
 - Singular SKAN Decoder pattern
@@ -533,7 +534,7 @@ The three upstream sources are also MIT or Apache-2.0 licensed, so this aggregat
 
 | Field | Value |
 |---|---|
-| **Skill version** | 1.1.0 |
+| **Skill version** | 1.2.0 |
 | **Last verified** | 2026-05-07 |
 | **iOS baseline** | 17.4+ for AAK; 18+ for `PostbackUpdate` API |
 | **Status** | Active — used in production by maintainer |
