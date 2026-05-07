@@ -24,8 +24,8 @@ This skill specifically owns the **Attribution & MMP** category. Other categorie
 
 ### Core Integration Checks (PASS/WARN/FAIL each)
 
-1. **MMP integrated with Apple Ads via AdAttributionKit + ATT**
-   - PASS: MMP dashboard shows Apple Ads as configured partner with active postback URL
+1. **MMP integrated with Apple Ads attribution paths**
+   - PASS: MMP dashboard shows Apple Ads as configured partner, with AdServices and SKAN/AAK settings enabled where the MMP supports them
    - WARN: configured but no postbacks in last 7 days (volume issue OR mis-configured)
    - FAIL: Apple Ads not registered as partner
 
@@ -33,13 +33,13 @@ This skill specifically owns the **Attribution & MMP** category. Other categorie
    - Go to: AppsFlyer/Adjust/Branch dashboard → Integrated Partners → Apple Ads → verify enabled
    - Check: campaign-level data flows back (not just install count)
 
-3. **In-app events sent back to Apple Ads**
-   - Required for Maximize Conversions bidding and ROAS optimization
-   - Check: at least 3 post-install events forwarded (purchase, trial_start, signup typical)
+3. **In-app events imported/forwarded where your reporting stack needs them**
+   - Useful for MMP reporting, downstream analytics, and non-Apple ad platforms
+   - Do not claim Apple Ads Maximize Conversions optimizes to post-install events or ROAS; the current Maximize Conversions product optimizes tap-through installs with target CPA
 
-4. **AdAttributionKit registered (since Apr 2025)**
-   - Apple Ads creates dual attribution: AAK postback + AdServices API
-   - Both should appear in MMP raw logs for same install
+4. **SKAN/AdAttributionKit support checked**
+   - Apple Ads attribution may arrive through AdServices and privacy-preserving postbacks depending on current Apple/MMP support
+   - MMPs deduplicate overlapping paths; do not require both to appear in raw logs for every install
 
 5. **SKAdNetwork conversion values configured**
    - Conversion value mapping defined in MMP dashboard
@@ -58,7 +58,7 @@ This skill specifically owns the **Attribution & MMP** category. Other categorie
 
 8. **Default Apple Ads attribution: 30-day click, 1-day view**
    - Appropriate for most install goals
-   - For re-engagement campaigns: extend to 7-day view via WWDC 2025 configurable windows
+   - For re-engagement campaigns: verify the current Apple Ads/AAK click and view windows in your MMP before changing defaults
 
 9. **WWDC 2025 features**
    - Configurable attribution windows: enabled?
@@ -73,9 +73,9 @@ This skill specifically owns the **Attribution & MMP** category. Other categorie
 **Score: 11/15 (73%)**
 
 ### PASS
-- ✅ MMP integrated with Apple Ads via AAK + ATT (AppsFlyer)
+- ✅ MMP integrated with Apple Ads attribution paths (AppsFlyer)
 - ✅ Apple Ads partner configured in AppsFlyer
-- ✅ 5 in-app events forwarded (install, signup, trial_start, sub_renewed, purchase)
+- ✅ 5 in-app events available in MMP reporting (install, signup, trial_start, sub_renewed, purchase)
 - ✅ SKAdNetwork conversion values mapped (revenue-bucket encoding)
 - ✅ Default attribution windows in use (30d click, 1d view)
 
@@ -84,10 +84,10 @@ This skill specifically owns the **Attribution & MMP** category. Other categorie
 - ⚠️ ~12% of installs receive null postbacks (Tier 0). Likely cause: campaign volume too low. Action: consolidate creative groupings to climb crowd anonymity tier.
 
 ### FAIL
-- ❌ AdAttributionKit registration missing — only legacy SKAN postbacks flowing. Action: verify `AdNetworkIdentifiers` Info.plist contains both `.skadnetwork` and `.adattributionkit` IDs for Apple Ads.
+- ❌ Apple Ads privacy-preserving postback setup incomplete. Action: verify current MMP Apple Ads partner settings, conversion mapping, and any required postback-copy endpoints/partner ID lists.
 
 ### Top Action (this week)
-1. Add `AdAttributionKit` integration → recover dual-attribution postbacks (estimated +20% attribution coverage)
+1. Fix Apple Ads partner/postback setup in the MMP → improve privacy-preserving attribution coverage
 2. Implement ATT pre-permission screen → estimated +15-25% opt-in lift
 3. Consolidate 8 small Search Match campaigns into 2 larger ones → climb to Tier 2/3 postbacks
 ```
@@ -97,16 +97,16 @@ This skill specifically owns the **Attribution & MMP** category. Other categorie
 | Symptom | Likely Cause | Fix Reference |
 |---|---|---|
 | Apple Ads in MMP shows 0 installs but Apple Ads dashboard shows installs | Partner not enabled OR postback URL wrong | MMP → Integrated Partners → Apple Ads → verify endpoint |
-| Apple Ads installs OK but no in-app events | Event forwarding not configured | MMP → Apple Ads → Event Mapping → add events |
+| Apple Ads installs OK but no in-app events in your MMP reports | Event mapping/import not configured | MMP → Apple Ads / reporting settings → map events as needed |
 | All Tier 0 postbacks | Volume too low | Consolidate campaigns; let creative variants share source ID |
-| MMP shows install double-count for Apple Ads | AAK + AdServices both reporting (expected) | Most MMPs auto-deduplicate; check filter setting |
+| MMP shows install double-count for Apple Ads | Overlapping Apple Ads paths or partner settings | Most MMPs auto-deduplicate; check Apple Ads partner settings |
 | ATT opt-in <15% | Bad prompt design | See `consent-gating.md` pre-permission section |
 | In-app events go "Organic" in MMP | ATT timing bug | See `att-timing-and-events.md` |
 | 80% Apple Ads installs show as Organic | AdServices API token not implemented OR not forwarded to MMP | See "AdServices API" section below |
 
 ## AdServices API (Apple Ads Deterministic Path)
 
-The MOST common cause of "80% Apple Ads installs go Organic" is missing AdServices API integration. This is the deterministic, IDFA-independent attribution token Apple provides — bypasses ATT entirely.
+The MOST common cause of "80% Apple Ads installs go Organic" is missing Apple Ads partner/AdServices integration. AdServices is a token-based, IDFA-independent attribution path. It is not an ATT bypass for third-party tracking; ATT can still affect available detail and other SDK signals.
 
 ### How it works
 
@@ -124,9 +124,9 @@ func reportAppleAdsAttribution() async {
     do {
         let token = try AAAttribution.attributionToken()
 
-        // Option A: send to MMP (recommended — they handle the API call)
-        AppsFlyerLib.shared().setAppleAdsAttributionToken(token)
-        // Adjust equivalent: adjustConfig?.attributionDetails(token)
+        // Option A: send through your MMP if their current SDK/S2S API requires it.
+        // Many current iOS SDKs auto-handle AdServices when the framework is linked
+        // and the Apple Ads partner integration is enabled. Check your MMP docs.
 
         // Option B: call Apple directly (if not using MMP)
         var request = URLRequest(url: URL(string: "https://api-adservices.apple.com/api/v1/")!)
@@ -155,16 +155,16 @@ In MMP raw data, an Apple Ads install with proper AdServices integration shows:
 - `ad_unit: <ad-group-name>`
 - `keyword: <keyword-or-Search-Match>`
 
-If any of these is null/None → token not delivered to MMP. Add AAAttribution call.
+If any of these is null/None → token or Apple Ads partner data is not reaching the MMP. Check the MMP's current AdServices/Apple Ads integration before adding custom token forwarding.
 
 ### MMP-specific endpoints
 
-| MMP | API |
+| MMP | Current guidance |
 |---|---|
-| AppsFlyer | `AppsFlyerLib.shared().setAppleAdsAttributionToken(token)` |
-| Adjust | Auto-handled if `adjustConfig?.needsCost = true` and AdServices framework linked |
-| Branch | `Branch.getInstance().setAppleSearchAdsAttributionToken(token)` |
-| Singular | `Singular.setAppleAttributionToken(token)` |
+| AppsFlyer | Link `AdServices.framework`; Apple Ads attribution collection is SDK/partner controlled unless disabled. |
+| Adjust | Link `AdServices.framework`; SDK + Apple Ads integration handle attribution. `needsCost` is about cost fields, not token forwarding. |
+| Branch | Use Branch's current SDK or S2S Apple Ads attribution-token support. |
+| Singular | Use Singular's current SDK or S2S `attribution_token` support. |
 
 ## Maximize Conversions + CPP Updates (2025-2026 Apple Ads Changes)
 
@@ -182,7 +182,7 @@ If user asks for audit but hasn't provided data, ask for:
 - Apple Ads campaign list with: spend, installs, CPT, TTR, CVR (last 30 days)
 - ATT opt-in rate (from MMP dashboard)
 - % of installs with non-zero postbacks (from MMP)
-- Whether AdAttributionKit is registered (Info.plist content)
+- Whether SKAN/AdAttributionKit postback support and copy endpoints are configured (Info.plist + MMP partner settings)
 - Active placement types (Search Results / Today / Search Tab / Product Pages)
 - Target CPI / CPA + app category
 - Countries/regions active

@@ -8,14 +8,14 @@ The single most common cause of "installs going Organic" on iOS post-14.5.
 App launch (T=0)
 │
 ├─ T=0    AppDelegate.didFinishLaunching
-│         AppsFlyerLib.shared().start()  ← install payload SENT NOW
+│         AppsFlyerLib.shared().start()  ← if no ATT wait is configured, launch payload SENT NOW
 │         IDFA = 00000000-0000-0000-0000-000000000000  (ATT not granted yet)
 │         → MMP records install with no IDFA
 │         → Marked "Organic" forever (no re-attribution path)
 │
 ├─ T=2s   Splash screen
-│         Adjust.trackEvent("splash_view")  ← event SENT NOW
-│         Same problem: no IDFA → Organic event
+│         Meta/TikTok/backend event sent outside the MMP queue
+│         Same problem: no IDFA / no consent signal → unattributed or rejected event
 │
 ├─ T=8s   Onboarding completes
 │         ATTrackingManager.requestTrackingAuthorization { status in ... }
@@ -29,11 +29,15 @@ App launch (T=0)
 
 ## Two Defenses, Both Required
 
-### Defense 1: MMP install/session wait interval
+### Defense 1: Configure the MMP wait/delay before SDK start
 
-Both Adjust and AppsFlyer support holding the install/first-session payload until ATT response or a max wait.
+Adjust and AppsFlyer both have ATT wait behavior, but the scope is vendor-specific. Configure it before `start()` / `initSdk()`, and do not assume it covers events emitted through other SDKs or your backend.
 
 #### Adjust v5 (current, 2025-2026 — strongly recommended)
+
+Choose ONE delay mechanism:
+
+**Option A — ATT consent waiting interval**
 
 ```swift
 import AdjustSdk
@@ -42,14 +46,29 @@ let adjustConfig = ADJConfig(
     appToken: "YOUR_TOKEN",
     environment: ADJEnvironmentProduction
 )
-adjustConfig?.attConsentWaitingInterval = 120  // seconds, max 360 (Adjust iOS native SDK)
-adjustConfig?.enableFirstSessionDelay()        // METHOD CALL — delays entire first session
+adjustConfig?.attConsentWaitingInterval = 120  // seconds, max 360
 
 Adjust.initSdk(adjustConfig)                   // v5 init (NOT appDidLaunch — that's v4)
+```
 
-// After ATT prompt resolves, explicitly resume:
+**Option B — first-session delay (SDK 5.3.0+)**
+
+```swift
+import AdjustSdk
+
+let adjustConfig = ADJConfig(
+    appToken: "YOUR_TOKEN",
+    environment: ADJEnvironmentProduction
+)
+adjustConfig?.enableFirstSessionDelay()        // METHOD CALL — queues first-session packages
+
+Adjust.initSdk(adjustConfig)
+
+// After ATT prompt or your own consent/data enrichment resolves:
 Adjust.endFirstSessionDelay()
 ```
+
+Do not combine them. Adjust's first-session delay takes precedence; when it is enabled, `attConsentWaitingInterval` is ignored.
 
 #### Adjust v4 (legacy — only if you cannot upgrade)
 
@@ -66,7 +85,7 @@ Adjust.appDidLaunch(config)                // v4 init API
 
 #### AppsFlyer
 
-AppsFlyer auto-buffers when you set:
+AppsFlyer queues the launch event and consecutive in-app events in memory when you set:
 
 ```swift
 AppsFlyerLib.shared().waitForATTUserAuthorization(timeoutInterval: 60)
@@ -75,26 +94,28 @@ AppsFlyerLib.shared().waitForATTUserAuthorization(timeoutInterval: 60)
 Then:
 
 ```swift
-AppsFlyerLib.shared().start()  // Will not actually send until ATT resolves OR timeout hits
+AppsFlyerLib.shared().start()  // Queued launch/consecutive events send when ATT resolves OR timeout hits
 ```
 
 Recommended timeout: **60 seconds** (AppsFlyer official). Longer risks losing the session.
 
-### Defense 2: Don't fire trackEvent before ATT response
+### Defense 2: Gate unmanaged event pipes before ATT/consent response
 
-`attConsentWaitingInterval` (Adjust) and `waitForATTUserAuthorization` (AppsFlyer) **only buffer the install/session payload**. Arbitrary `trackEvent` calls bypass the buffer and ship immediately.
+MMP queues do not cover every pipe. Backend/CAPI calls, direct Meta/TikTok SDK calls, analytics wrappers, and events emitted before the wait config is applied can still leave immediately. Gate those until ATT and any other required privacy consent state is known.
 
 This is the bug pattern observed in production iOS apps:
 
 ```swift
 // YourApp/Features/Splash/SplashView.swift:39
-// ❌ BAD — fires immediately, ATT may not be resolved yet
-Adjust.trackEvent(ADJEvent(eventToken: "pvl5b6"))
+// BAD — leaves outside the MMP ATT wait queue
+BackendClient.shared.logMarketingEvent(.splashView)
+AppEvents.shared.logEvent(.viewedContent)
 
-// ✅ FIX — gate behind ATT resolution
+// FIX — gate unmanaged pipes behind ATT/privacy resolution
 Task {
     await AttResolver.shared.waitForResolution()  // your wrapper
-    Adjust.trackEvent(ADJEvent(eventToken: "pvl5b6"))
+    guard PrivacyConsent.shared.canSendMarketingEvent else { return }
+    BackendClient.shared.logMarketingEvent(.splashView)
 }
 ```
 
@@ -127,7 +148,7 @@ ATTrackingManager.requestTrackingAuthorization { status in
 }
 ```
 
-Now any `trackEvent` call site can `await AttResolver.shared.waitForResolution()` before firing.
+Now any unmanaged marketing event call site can `await AttResolver.shared.waitForResolution()` before firing. For AppsFlyer/Adjust SDK event calls, still review the current SDK's queue semantics, but do not extrapolate them to Meta, TikTok, Firebase, CAPI, or your own backend.
 
 ## When to Show the ATT Prompt
 
@@ -162,9 +183,9 @@ Fix: add a hard timeout that forces the prompt regardless of capture state after
 
 When attribution looks broken, check in this order:
 
-1. **Is `attConsentWaitingInterval` (Adjust) or `waitForATTUserAuthorization` (AppsFlyer) actually set?** Search the codebase for these symbols. Absent = root cause found.
+1. **Is `attConsentWaitingInterval` or `enableFirstSessionDelay()` (Adjust) or `waitForATTUserAuthorization` (AppsFlyer) actually set before SDK start?** Search the codebase for these symbols. Absent = likely root cause if that SDK is used.
 2. **Is `start()` / `appDidLaunch` called BEFORE the wait config is set?** Order matters. Config first, then start.
-3. **Are there `trackEvent` calls between `start()` and the ATT prompt completion?** Grep for `trackEvent`, `logEvent`, `AppEvents.shared.logEvent`. Each is a leak point.
+3. **Are there unmanaged marketing events between `start()` and the ATT prompt completion?** Grep for `trackEvent`, `logEvent`, `AppEvents.shared.logEvent`, backend CAPI calls, TikTok direct events, and custom analytics wrappers. Each needs a consent decision, even if the MMP SDK itself queues its own events.
 4. **Does the ATT prompt actually fire?** Add a log on every callback path. Capture-protection or modal stacking can silently swallow it.
 5. **Is the wait interval long enough to cover your onboarding?** If onboarding takes 90s and interval is 60s, install ships before prompt.
 6. **Are you on Adjust v5.x (recommended) or v4.34.0+ minimum / AppsFlyer 6.14.0+ for full SKAN 4 + AAK?** Older versions miss the wait APIs and modern postback support.
@@ -191,8 +212,7 @@ appsFlyer.initSdk({
 import { Adjust, AdjustConfig } from 'react-native-adjust'
 
 const adjustConfig = new AdjustConfig('YOUR_TOKEN', AdjustConfig.EnvironmentProduction)
-adjustConfig.setAttConsentWaitingInterval(120)
-adjustConfig.enableFirstSessionDelay()  // delays first session until ATT resolves
+adjustConfig.enableFirstSessionDelay()  // SDK 5.3.0+; do not combine with ATT waiting interval
 
 Adjust.initSdk(adjustConfig)
 
@@ -205,7 +225,7 @@ Adjust.endFirstSessionDelay()
 import { requestTrackingPermissionsAsync } from 'expo-tracking-transparency'
 
 const { status } = await requestTrackingPermissionsAsync()
-// status: 'undetermined' | 'denied' | 'authorized' | 'restricted'
+// status: 'undetermined' | 'denied' | 'granted'
 
 // Now resume Adjust + signal AppsFlyer
 Adjust.endFirstSessionDelay()
@@ -221,7 +241,7 @@ Notes:
 Use the script in `scripts/diagnose.sh` to grep your project for the common anti-patterns. Expected output if healthy:
 
 ```
-✓ attConsentWaitingInterval found in 1 location
+✓ Adjust ATT wait or first-session delay found in 1 location
 ✓ start() called AFTER waitFor* config
 ✓ no trackEvent calls outside guard wrapper
 ✓ ATT prompt has timeout fallback

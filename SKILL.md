@@ -4,7 +4,7 @@ description: >-
   Use when integrating, debugging, or auditing iOS marketing channel attribution
   under App Tracking Transparency (ATT). Covers AppsFlyer / Adjust / Branch /
   Singular SDK init order, ATT prompt timing, attConsentWaitingInterval
-  semantics, trackEvent gap, Meta Aggregated Event Measurement (AEM) + ATE
+  semantics, event-pipe scope gaps, Meta Aggregated Event Measurement (AEM) + ATE
   verification, SKAdNetwork v3/v4 + AdAttributionKit (AAK) dual attribution,
   conversion value mapping, Facebook AppEvents consent gating, Apple Search Ads
   / Google App Campaigns / Meta App Install / TikTok App Install measurement,
@@ -73,7 +73,7 @@ What is the user asking?
 ├─ "TikTok ad attribution / SKAN ownership / TikTok SDK init"
 │   └─→ references/tiktok-integration.md
 │       Cover: TikTokBusinessSDK init, disableSKAdNetworkSupport(),
-│       suppressAppTrackingDialog(), SKAN ownership decision matrix,
+│       ATT delay controls, SKAN ownership decision matrix,
 │       hybrid MMP+SDK setup, Events API S2S
 │
 ├─ "ATT prompt design / consent flow / SDK gating"
@@ -110,9 +110,9 @@ What is the user asking?
 
 | State | Meaning | IDFA | MMP Action | Marketing SDK Action |
 |---|---|---|---|---|
-| `.notDetermined` | User not asked yet | All zeros | **Buffer install/session payload** (do NOT send yet) | Init in deferred mode; queue events |
+| `.notDetermined` | User not asked yet | All zeros | Configure SDK wait/delay before start; do not send first session before ATT response or timeout | Init in deferred mode; queue unmanaged events |
 | `.authorized` | User allowed | Real IDFA | Send full payload with IDFA | Enable user-level tracking |
-| `.denied` | User declined | All zeros | Send aggregate-only via SKAN/AAK | Switch to SKAdNetwork-only mode; NO trackEvent for user-level |
+| `.denied` | User declined | All zeros | Send aggregate-only via SKAN/AAK | Continue only consent-allowed limited/aggregate events; no IDFA/user-level tracking |
 | `.restricted` | MDM/parental block | All zeros | **Do NOT prompt** (`requestTrackingAuthorization` will fail silently); use SKAN | SKAN-only mode |
 
 **Critical:** `.notDetermined` is the dangerous state. If your MMP SDK fires `start()` here without a wait interval, install payload goes out with zero IDFA → MMP can never re-attribute it later → permanent "Organic" misclassification.
@@ -142,7 +142,7 @@ A healthy stack uses **all three** simultaneously. If only one is wired, you're 
 
 ### Two Most Common Production Failures
 
-1. **The `attConsentWaitingInterval` Trap.** MMP SDKs (Adjust, AppsFlyer) provide a wait interval that delays the **install/first-session payload** until ATT response arrives. But it does NOT delay arbitrary `trackEvent` calls. Splash, onboarding, first-app-open events fired before ATT response go out with zero IDFA → permanent Organic. Fix in `references/att-timing-and-events.md`.
+1. **The ATT wait/delay scope trap.** MMP wait APIs are SDK-specific. AppsFlyer queues the launch event and consecutive in-app events during `waitForATTUserAuthorization`; Adjust `attConsentWaitingInterval` delays first-session activity and first-session delay queues recorded packages until released. The trap is assuming those SDK queues cover every pipe: SDK-external events, backend/CAPI sends, Meta/TikTok direct SDK events, and events emitted before wait config still need explicit ATT/privacy gating. Fix in `references/att-timing-and-events.md`.
 
 2. **Silent Consent-Denied Paths.** Marketing SDKs often have a code path where `requestTrackingAuthorization` denied/notDetermined results in early-return without logging. Looks like "everything works" until you check the dashboard and see a 50% drop in events. Fix in `references/consent-gating.md`.
 
@@ -150,10 +150,10 @@ A healthy stack uses **all three** simultaneously. If only one is wired, you're 
 
 | Channel | iOS Attribution Mechanism | ATT Dependency | Key SDK |
 |---|---|---|---|
-| **Apple Ads (ASA)** | AAK + AdServices API (dual since Apr 2025) | Indirect (improves modeling) | None — server-side via MMP |
-| **Google App Campaigns** | SKAdNetwork + Firebase events | Required for user-level | Firebase + Google Ads SDK |
-| **Meta App Install** | AEM + SKAN postbacks | Required for AEM 8-event mapping | Meta SDK or MMP S2S |
-| **TikTok App Install** | SKAN + S2S events | Required for user-level | TikTok SDK or MMP |
+| **Apple Ads (ASA)** | AdServices token + AAK/SKAN where supported | Not IDFA-dependent; ATT can affect payload detail/modeling | None or MMP SDK |
+| **Google App Campaigns** | SKAdNetwork + Firebase events | Required for user-level/ad-personalization links | Firebase + Google Ads SDK |
+| **Meta App Install** | AEM + SKAN + SDK/MMP/CAPI app events | ATT authorized enables IDFA-level SDK signals; AEM covers limited users after setup | Meta SDK, MMP S2S, or CAPI |
+| **TikTok App Install** | SKAN + SDK/S2S events | Required for IDFA/user-level signals; limited events still need privacy gating | TikTok SDK or MMP |
 | **Snap App Install** | SKAN | Required | Snap SDK or MMP |
 | **Branch / Adjust / AppsFlyer / Singular (MMP)** | Aggregator across all above + IDFA | Required for user-level | Their SDK |
 
@@ -193,6 +193,6 @@ This skill merges and extends three upstream community skills:
 2. **dpearson2699/swift-ios-skills → adattributionkit** — AdAttributionKit role model, conversion windows, postback tiers, code patterns
 3. **mukul975/Privacy-Data-Protection-Skills → managing-mobile-app-consent** — ATT 4-state matrix, pre-permission prompt design, per-SDK consent propagation patterns
 
-Plus anonymized production iOS app incidents which surfaced the `attConsentWaitingInterval` + `trackEvent` gap and the silent capture-protection / Facebook AppEvents denied paths.
+Plus anonymized production iOS app incidents which surfaced ATT wait/delay scope gaps and the silent capture-protection / Facebook AppEvents denied paths.
 
 See individual `references/*.md` files for detailed playbooks per problem type.

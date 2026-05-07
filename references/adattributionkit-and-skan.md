@@ -1,6 +1,6 @@
 # AdAttributionKit + SKAdNetwork — Postback Layer Reference
 
-The privacy-preserving attribution layer that works regardless of ATT state. Required for any iOS marketing in 2026+.
+The privacy-preserving attribution layer that does not require ATT authorization or IDFA. Required for any iOS marketing in 2026+.
 
 ## SKAN vs AAK — Quick Picture
 
@@ -142,7 +142,7 @@ SKAdNetwork.updatePostbackConversionValue(
 }
 ```
 
-If you support both AAK and SKAN, call BOTH on every event update. Apple's framework deduplicates downstream.
+If you support both AAK and SKAN, follow the current Apple/MMP integration guidance for dual reporting. Recent StoreKit SKAN APIs can bridge into AdAttributionKit in supported cases, while explicit AAK `Postback` calls give you AAK-specific controls such as conversion types. Do not let two independent owners write conflicting conversion values for the same event.
 
 ### SKAN 4 Three-Window Model (parallel to AAK)
 
@@ -186,7 +186,7 @@ By default, **both** SKAN and AAK postbacks go to the ad network ONLY. To also r
 | Framework | Info.plist key | Location in plist | Allowed values |
 |---|---|---|---|
 | SKAdNetwork (SKAN) | `NSAdvertisingAttributionReportEndpoint` | top-level | exactly ONE URL |
-| AdAttributionKit (AAK) | `AttributionCopyEndpoint` | inside `AdAttributionKit` dict | one URL |
+| AdAttributionKit (AAK) | `AttributionCopyEndpoint` | top-level | one URL/domain string |
 
 ### NSAdvertisingAttributionReportEndpoint (SKAN Postback Mirror)
 
@@ -200,7 +200,7 @@ Top-level Info.plist key. This is how Apple knows where to send a SECOND copy of
 **Critical rules:**
 
 - **ONLY ONE value allowed.** This is a single string, not an array. If you set both an MMP endpoint AND a custom server endpoint, only the LAST one wins → the other entity loses postback copies entirely.
-- **Without this key**, Apple sends SKAN postbacks ONLY to the ad network — your MMP has no way to verify postbacks server-side, and your own analytics will never see them.
+- **Without this key**, Apple sends SKAN postbacks to the ad network, not to your app developer endpoint. Your MMP may still receive data through ad network/partner integrations, but your direct server-side postback copy is missing.
 - **Pick one:** either point at your MMP (most common) OR your own server. If you need both, you have to chain — let your MMP receive copies, then forward to you.
 
 | MMP | NSAdvertisingAttributionReportEndpoint value |
@@ -210,20 +210,18 @@ Top-level Info.plist key. This is how Apple knows where to send a SECOND copy of
 | Branch | (check Branch docs) |
 | Singular | (check Singular docs) |
 
-Apple appends the postback path automatically — set the base URL exactly as the MMP publishes it (trailing slash matters for some providers).
+Apple appends the postback path automatically. Set the endpoint exactly as the MMP publishes it.
 
 ### AttributionCopyEndpoint (AAK Postback Mirror)
 
-Separate key, separate mechanism — AAK-specific, set INSIDE the `AdAttributionKit` dict. Receives copies of AAK postbacks (NOT SKAN postbacks). If you want copies of both SKAN and AAK postbacks, you must configure BOTH keys.
+Separate key, separate mechanism — AAK-specific, top-level Info.plist key. It receives copies of AAK postbacks (NOT SKAN postbacks). If you want copies of both SKAN and AAK postbacks, configure both `NSAdvertisingAttributionReportEndpoint` and `AttributionCopyEndpoint`.
 
 ```xml
-<key>AdAttributionKit</key>
-<dict>
-    <key>AttributionCopyEndpoint</key>
-    <string>https://attribution.yourdomain.com</string>
-    <key>OptInForReengagementPostbackCopies</key>
-    <true/>
-</dict>
+<key>AttributionCopyEndpoint</key>
+<string>https://attribution.yourdomain.com</string>
+
+<key>EligibleForAdAttributionKitReengagementPostbackCopies</key>
+<true/>
 ```
 
 Apple sends POST to: `https://attribution.yourdomain.com/.well-known/appattribution/report-attribution/`
@@ -237,19 +235,15 @@ Postback body (JSON):
 
 ```json
 {
-  "version": "5.0",
-  "ad-network-id": "example.adattributionkit",
-  "campaign-id": 42,
-  "transaction-id": "uuid-here",
-  "app-id": 1234567890,
-  "attribution-signature": "base64-sig",
-  "redownload": false,
-  "source-app-id": 9876543210,
+  "jws-string": "eyJhbGciOiJFUzI1NiIsIng1YyI6Wy4uLl19.eyJ2ZXJzaW9uIjoiNS4wIiwuLi4ifQ.signature",
   "conversion-value": 35,
-  "fidelity-type": 1,
-  "did-win": true
+  "coarse-conversion-value": "high",
+  "ad-interaction-type": "click",
+  "country-code": "US"
 }
 ```
+
+The signed JWS payload carries the AAK-specific attribution parameters such as advertised item identifier, source identifier, postback sequence index, conversion type, source domain, and signature metadata. Verify the JWS instead of treating legacy SKAN fields such as `transaction-id` or `attribution-signature` as the source of truth.
 
 ## Required Info.plist for Publisher Apps (Showing Ads)
 
@@ -262,7 +256,7 @@ Postback body (JSON):
 </array>
 ```
 
-For advertisers (apps being promoted), also add `SKAdNetworkItems`:
+For apps that show ads (source/publisher apps), `SKAdNetworkItems` is still used by SKAN ad networks. Some MMPs also ask advertiser apps to ship partner ID lists for compatibility or SDK validation, but do not treat this as the AAK postback-copy key.
 
 ```xml
 <key>SKAdNetworkItems</key>
@@ -275,16 +269,16 @@ For advertisers (apps being promoted), also add `SKAdNetworkItems`:
 </array>
 ```
 
-Most MMPs (AppsFlyer, Adjust, Branch, Singular) maintain a master list of all ad network IDs you can copy-paste.
+Most MMPs (AppsFlyer, Adjust, Branch, Singular) maintain a master list of ad network IDs. Pull the current list from the MMP/ad network you actually use.
 
-## Apple Ads Dual Attribution (since Apr 2025)
+## Apple Ads Attribution Paths
 
-Since April 10, 2025, Apple Ads installs report through BOTH:
+Apple Ads attribution is not an IDFA pipe. Treat these as separate, deduplicated paths that may or may not both appear in your MMP depending on OS version, Apple Ads support, and partner configuration:
 
-1. **AdAttributionKit + SKAN postbacks** (privacy-preserving, all users)
-2. **AdServices API** (full IDFA-based, requires user to remain in App Store flow without leaving)
+1. **AdServices API** — token-based Apple Ads attribution; IDFA-independent, but ATT/user privacy settings can affect detail and availability.
+2. **SKAN / AdAttributionKit postbacks** — privacy-preserving postbacks where Apple Ads and your MMP support them.
 
-This means an Apple Ads install has 2 attribution paths, and you may see "double counting" in raw logs. MMPs deduplicate. WWDC 2025 added:
+MMPs deduplicate overlapping Apple Ads paths. Do not expect a raw "AAK + AdServices" pair for every Apple Ads install. WWDC 2025 added:
 
 - Configurable attribution windows
 - Overlapping re-engagement windows
@@ -325,7 +319,7 @@ if let reengagementParam = userActivity.webpageURL?.params["postbackReengagement
 - Apple caps re-engagement: monthly per-app + yearly per-device limits
 - Only AAK supports it (SKAN 4's "view-through re-engagement" is much more limited)
 - Re-engagement window: 2 days from impression → first update (vs 60 days for installs)
-- Add `OptInForReengagementPostbackCopies = true` in Info.plist (already in your AAK block) to receive re-engagement postback copies on your `AttributionCopyEndpoint`
+- Add `EligibleForAdAttributionKitReengagementPostbackCopies = true` in Info.plist to receive eligible re-engagement postback copies on your `AttributionCopyEndpoint`
 
 ## Common Failure Modes
 
@@ -349,9 +343,9 @@ if let reengagementParam = userActivity.webpageURL?.params["postbackReengagement
 
 ### 4. "MMP shows installs but no SKAN postbacks"
 
-**Cause:** MMP's SKAN postback endpoint not configured in ad network setup, OR `AdNetworkIdentifiers` missing the partner's ID.
+**Cause:** MMP's SKAN postback endpoint not configured in ad network setup, postback-copy endpoint missing, or the source app/ad partner ID list is stale where that list is required.
 
-**Fix:** check MMP integration page → verify SKAN endpoint URL is registered with each ad partner's dashboard.
+**Fix:** check MMP integration page → verify SKAN endpoint URL is registered with each ad partner's dashboard, and sync current partner IDs where your source-app or MMP setup requires them.
 
 ### 5. "Conversion values look random / no pattern"
 

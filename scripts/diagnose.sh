@@ -47,8 +47,8 @@ if [ -z "$PLISTS" ]; then
 elif echo "$PLISTS" | xargs grep -l "SKAdNetworkItems" >/dev/null 2>&1; then
     pass "SKAdNetworkItems present"
 else
-    fail "missing — no SKAN postbacks possible"
-    info "Add SKAdNetworkItems with all ad partner IDs"
+    warn "missing — required for source apps showing ads; also add if your MMP/ad partners require a current ID list"
+    info "Pull SKAdNetworkItems from your MMP/ad partner master list"
 fi
 echo
 
@@ -80,30 +80,51 @@ echo
 # CHECK 5: AppsFlyer waitForATTUserAuthorization
 # ============================================================
 echo "[5/10] AppsFlyer ATT wait config"
-if grep -rln "waitForATTUserAuthorization\|timeToWaitForATTUserAuthorization" \
-   --include="*.swift" --include="*.m" --include="*.ts" --include="*.tsx" --include="*.js" \
-   . 2>/dev/null | grep -v "/Pods/\|/node_modules/\|/build/" | head -5 >/tmp/af_check; then
-    if [ -s /tmp/af_check ]; then
-        pass "AppsFlyer wait config found"
-        cat /tmp/af_check | sed 's/^/    /'
-    else
-        warn "AppsFlyer SDK not detected — skip if not using"
-    fi
+AF_SDK_HITS=$(grep -rln "AppsFlyerLib\|react-native-appsflyer\|appsFlyer\.initSdk" \
+    --include="*.swift" --include="*.m" --include="*.ts" --include="*.tsx" --include="*.js" \
+    . 2>/dev/null | grep -v "/Pods/\|/node_modules/\|/build/" | head -5 || true)
+AF_WAIT_HITS=$(grep -rln "waitForATTUserAuthorization\|timeToWaitForATTUserAuthorization" \
+    --include="*.swift" --include="*.m" --include="*.ts" --include="*.tsx" --include="*.js" \
+    . 2>/dev/null | grep -v "/Pods/\|/node_modules/\|/build/" | head -5 || true)
+if [ -n "$AF_WAIT_HITS" ]; then
+    pass "AppsFlyer wait config found"
+    echo "$AF_WAIT_HITS" | sed 's/^/    /'
+elif [ -n "$AF_SDK_HITS" ]; then
+    warn "AppsFlyer SDK detected but no ATT wait config found"
+    echo "$AF_SDK_HITS" | sed 's/^/    /'
+else
+    warn "AppsFlyer SDK not detected — skip if not using"
 fi
 echo
 
 # ============================================================
 # CHECK 6: Adjust attConsentWaitingInterval
 # ============================================================
-echo "[6/10] Adjust ATT wait config"
+echo "[6/10] Adjust ATT wait / first-session delay config"
 ADJ_HITS=$(grep -rln "attConsentWaitingInterval\|setAttConsentWaitingInterval" \
     --include="*.swift" --include="*.m" --include="*.ts" --include="*.tsx" --include="*.js" \
-    . 2>/dev/null | grep -v "/Pods/\|/node_modules/\|/build/" | head -5)
-if [ -n "$ADJ_HITS" ]; then
+    . 2>/dev/null | grep -v "/Pods/\|/node_modules/\|/build/" | head -5 || true)
+ADJ_DELAY_HITS=$(grep -rln "enableFirstSessionDelay" \
+    --include="*.swift" --include="*.m" --include="*.ts" --include="*.tsx" --include="*.js" \
+    . 2>/dev/null | grep -v "/Pods/\|/node_modules/\|/build/" | head -5 || true)
+ADJ_SDK_HITS=$(grep -rln "AdjustSdk\|import Adjust\|react-native-adjust\|Adjust\.initSdk\|Adjust\.appDidLaunch" \
+    --include="*.swift" --include="*.m" --include="*.ts" --include="*.tsx" --include="*.js" \
+    . 2>/dev/null | grep -v "/Pods/\|/node_modules/\|/build/" | head -5 || true)
+if [ -n "$ADJ_HITS" ] && [ -n "$ADJ_DELAY_HITS" ]; then
+    warn "Adjust ATT waiting interval and first-session delay both found — first-session delay ignores ATT waiting interval; choose one"
+    echo "$ADJ_HITS" | sed 's/^/    /'
+    echo "$ADJ_DELAY_HITS" | sed 's/^/    /'
+elif [ -n "$ADJ_HITS" ]; then
     pass "Adjust attConsentWaitingInterval found"
     echo "$ADJ_HITS" | sed 's/^/    /'
+elif [ -n "$ADJ_DELAY_HITS" ]; then
+    pass "Adjust first-session delay found"
+    echo "$ADJ_DELAY_HITS" | sed 's/^/    /'
+elif [ -n "$ADJ_SDK_HITS" ]; then
+    warn "Adjust SDK detected but no ATT wait or first-session delay config found"
+    echo "$ADJ_SDK_HITS" | sed 's/^/    /'
 else
-    warn "no attConsentWaitingInterval — skip if not using Adjust"
+    warn "Adjust SDK not detected — skip if not using"
 fi
 echo
 
@@ -113,7 +134,7 @@ echo
 echo "[7/10] ATT prompt invocation"
 ATT_HITS=$(grep -rln "requestTrackingAuthorization\|requestTrackingPermissionsAsync" \
     --include="*.swift" --include="*.m" --include="*.ts" --include="*.tsx" --include="*.js" \
-    . 2>/dev/null | grep -v "/Pods/\|/node_modules/\|/build/" | head -5)
+    . 2>/dev/null | grep -v "/Pods/\|/node_modules/\|/build/" | head -5 || true)
 if [ -n "$ATT_HITS" ]; then
     pass "ATT request found"
     echo "$ATT_HITS" | sed 's/^/    /'
@@ -123,10 +144,10 @@ fi
 echo
 
 # ============================================================
-# CHECK 8: trackEvent calls + ATT-gating heuristic
+# CHECK 8: unmanaged event calls + ATT/privacy-gating heuristic
 # ============================================================
-echo "[8/10] trackEvent / logEvent call sites + ATT-gating"
-EVENT_HITS_ALL=$(grep -rn "Adjust\.trackEvent\|AppsFlyerLib.*sendEvent\|AppEvents\.shared\.logEvent\|appsFlyer\.logEvent" \
+echo "[8/10] unmanaged event call sites + ATT/privacy-gating"
+EVENT_HITS_ALL=$(grep -rn "AppEvents\.shared\.logEvent\|TikTokBusiness\.\(trackEvent\|trackTTEvent\)\|BackendClient.*logMarketing\|Conversions API\|CAPI\|appsFlyer\.logEvent\|Adjust\.trackEvent\|AppsFlyerLib.*sendEvent" \
     --include="*.swift" --include="*.m" --include="*.ts" --include="*.tsx" --include="*.js" \
     . 2>/dev/null | grep -v "/Pods/\|/node_modules/\|/build/" || true)
 if [ -n "$EVENT_HITS_ALL" ]; then
@@ -135,21 +156,21 @@ if [ -n "$EVENT_HITS_ALL" ]; then
     UNGATED=0
     while IFS=: read -r file _; do
         [ -z "$file" ] && continue
-        if ! grep -q "AttResolver\|requestTrackingAuthorization\|requestTrackingPermissions\|attStatus\|trackingAuthorizationStatus" "$file" 2>/dev/null; then
+        if ! grep -q "AttResolver\|PrivacyConsent\|consent\|requestTrackingAuthorization\|requestTrackingPermissions\|attStatus\|trackingAuthorizationStatus" "$file" 2>/dev/null; then
             UNGATED=$((UNGATED + 1))
         fi
     done <<< "$(echo "$EVENT_HITS_ALL" | head -20)"
     if [ "$UNGATED" -gt 0 ]; then
-        fail "$EVENT_COUNT trackEvent/logEvent call sites; ~$UNGATED file(s) lack any ATT-gating reference"
+        warn "$EVENT_COUNT marketing event call sites; ~$UNGATED file(s) lack obvious ATT/privacy-gating reference"
     else
-        warn "$EVENT_COUNT trackEvent/logEvent call sites — manual review still recommended"
+        warn "$EVENT_COUNT marketing event call sites — manual review still recommended"
     fi
     echo "$EVENT_HITS_ALL" | head -5 | sed 's/^/    /'
     if [ "$EVENT_COUNT" -gt 5 ]; then
         info "($EVENT_COUNT total — showing first 5)"
     fi
 else
-    info "no event tracking calls found (or different SDK pattern used)"
+    info "no matching marketing event calls found (or different SDK pattern used)"
 fi
 echo
 
@@ -179,8 +200,8 @@ ORDER_FILES=$(grep -rln "AppsFlyerLib.shared().start\|Adjust.initSdk\|Adjust.app
 if [ -n "$ORDER_FILES" ]; then
     while IFS= read -r file; do
         # Get line numbers of init vs wait config
-        WAIT_LINE=$(grep -n "waitForATTUserAuthorization\|attConsentWaitingInterval\|setAttConsentWaitingInterval" "$file" 2>/dev/null | head -1 | cut -d: -f1)
-        START_LINE=$(grep -n "AppsFlyerLib.shared().start\|Adjust.initSdk\|Adjust.appDidLaunch" "$file" 2>/dev/null | head -1 | cut -d: -f1)
+        WAIT_LINE=$(grep -n "waitForATTUserAuthorization\|attConsentWaitingInterval\|setAttConsentWaitingInterval\|enableFirstSessionDelay" "$file" 2>/dev/null | head -1 | cut -d: -f1 || true)
+        START_LINE=$(grep -n "AppsFlyerLib.shared().start\|Adjust.initSdk\|Adjust.appDidLaunch" "$file" 2>/dev/null | head -1 | cut -d: -f1 || true)
         if [ -n "$WAIT_LINE" ] && [ -n "$START_LINE" ] && [ "$WAIT_LINE" -gt "$START_LINE" ]; then
             fail "$file: wait config (line $WAIT_LINE) AFTER init (line $START_LINE) — must precede"
         fi
@@ -194,7 +215,7 @@ echo
 echo "[9/10] SKAN/AAK conversion value updates"
 CV_HITS=$(grep -rln "updateConversionValue\|updatePostbackConversionValue\|registerAppForAdNetworkAttribution" \
     --include="*.swift" --include="*.m" \
-    . 2>/dev/null | grep -v "/Pods/\|/build/" | head -5)
+    . 2>/dev/null | grep -v "/Pods/\|/build/" | head -5 || true)
 if [ -n "$CV_HITS" ]; then
     pass "conversion value update calls found"
     echo "$CV_HITS" | sed 's/^/    /'

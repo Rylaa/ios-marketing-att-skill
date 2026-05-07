@@ -14,7 +14,7 @@
 If you've ever shipped an iOS app with paid user acquisition, you've seen at least one of these:
 
 - 📉 **"Most of our installs show as Organic in the MMP dashboard"** — even though you're spending six figures on Meta and Apple Ads
-- 🪤 **`attConsentWaitingInterval` is set, but events still fire before ATT resolves** — and silently get attributed to Organic forever
+- 🪤 **MMP ATT wait is configured, but some events still leave before ATT resolves** — usually because they are outside that SDK's queue
 - 🤐 **Meta says AEM is configured, but Ads Manager won't let you select it** — and the docs don't explain why
 - 💀 **Apple Ads campaigns running, but 80% of installs are Organic** — because the AdServices API token isn't being forwarded
 - 🎯 **SKAN postbacks arrive empty after migrating to AdAttributionKit** — turns out one of two API calls got removed
@@ -30,7 +30,7 @@ When invoked inside Claude Code, the skill activates automatically on keywords l
 
 Most marketing-attribution skills focus on either **strategy** (campaign structure, bid optimization) or **single-vendor docs** (just AppsFlyer, just Adjust). This skill focuses specifically on the **plumbing layer** — the place where bugs actually live in production:
 
-- ✅ The **`attConsentWaitingInterval` + `trackEvent` gap** that affects every iOS app using Adjust or AppsFlyer
+- ✅ The **ATT wait/delay scope gap** across MMP queues, direct SDK calls, and backend/CAPI event pipes
 - ✅ The **capture-protection silent-defer bug** that prevents the ATT prompt from showing for affected users
 - ✅ The **Facebook AppEvents silent-drop** when ATT is denied
 - ✅ The **`AAAttribution.attributionToken()`** integration that fixes 80%-Organic-on-Apple-Ads
@@ -88,7 +88,7 @@ marketing-att-pipeline/
 ├── WORKFLOW.md                        5-stage operating sequence + 5 ready-made playbooks
 ├── README.md                          (this file)
 ├── references/
-│   ├── att-timing-and-events.md       MMP wait interval, trackEvent gap, RN/Expo
+│   ├── att-timing-and-events.md       MMP wait/delay scope, unmanaged event pipes, RN/Expo
 │   ├── consent-gating.md              ATT 4-state matrix × 6 SDK init pattern
 │   ├── adattributionkit-and-skan.md   AAK + SKAN 4 + iOS 18 PostbackUpdate + re-engagement
 │   ├── meta-aem-troubleshoot.md       Prerequisites + ATE error + extinfo 16-pos
@@ -158,7 +158,7 @@ AppsFlyer shows 1.8K Apple Ads installs and 11K Organic. Help.
 Skill response:
 1. Routes to references/apple-ads-audit.md → AdServices API section
 2. Diagnoses: AAAttribution.attributionToken() not implemented or not forwarded
-3. Provides Swift integration code + AppsFlyer-specific token-forward call
+3. Provides Swift integration code and MMP-specific AdServices checks
 4. Verifies in MMP raw data: `media_source: Apple Search Ads` (not Organic)
 5. Suggests waiting 24h to validate
 ```
@@ -172,7 +172,7 @@ campaign, the AEM event option is greyed out.
 Skill response:
 1. Routes to references/meta-aem-troubleshoot.md → Prerequisites section
 2. Walks 7-step prerequisite checklist (app published, BM association, domain
-   verified, 8-event hierarchy, app status, install volume, event sending mech)
+   verified, AEM/event sharing, app status, install volume, event sending mech)
 3. Identifies likely missing prereq: domain verification or app-to-ad-account
    association
 4. Provides specific Meta UI navigation paths
@@ -249,13 +249,13 @@ Performs **12 static checks** on your iOS project source:
 | # | Check | What it catches |
 |---|---|---|
 | 1 | `NSUserTrackingUsageDescription` | ATT prompt would crash without it |
-| 2 | `SKAdNetworkItems` | No SKAN postbacks possible |
+| 2 | `SKAdNetworkItems` | Source-app SKAN IDs missing, or partner-required ID list absent |
 | 3 | `PrivacyInfo.xcprivacy` | App Review rejection (iOS 17+) |
-| 4 | `AdAttributionKit` plist key | AAK postback copy not enabled |
+| 4 | `AttributionCopyEndpoint` plist key | AAK postback copy not enabled |
 | 5 | AppsFlyer `waitForATTUserAuthorization` | Install ships before ATT resolves |
 | 6 | Adjust `attConsentWaitingInterval` | Same problem on Adjust |
 | 7 | `ATTrackingManager` request call site | ATT never actually requested |
-| 8 | `trackEvent` + ATT-gating heuristic | The Production-class trackEvent gap |
+| 8 | unmanaged event + ATT/privacy-gating heuristic | Direct SDK/backend event pipes that need gating |
 | 8b | Capture-protection silent-defer | `isCaptured` near `requestTrackingAuthorization` |
 | 8c | SDK init order | Wait config before `start()` / `initSdk()` |
 | 9 | SKAN/AAK conversion value updates | Postbacks won't carry CV data |
@@ -282,14 +282,14 @@ Root: /Users/me/Projects/MyApp
 [5/10] AppsFlyer ATT wait config
 ✓ AppsFlyer wait config found
 
-[6/10] Adjust ATT wait config
-⚠ no attConsentWaitingInterval — skip if not using Adjust
+[6/10] Adjust ATT wait / first-session delay config
+⚠ Adjust SDK not detected — skip if not using
 
 [7/10] ATT prompt invocation
 ✓ ATT request found
 
-[8/10] trackEvent / logEvent call sites + ATT-gating
-✗ 14 trackEvent/logEvent call sites; ~3 file(s) lack any ATT-gating reference
+[8/10] unmanaged event call sites + ATT/privacy-gating
+⚠ 14 marketing event call sites; ~3 file(s) lack obvious ATT/privacy-gating reference
 
 [8b] Capture-protection ATT defer
    (no findings)
@@ -404,7 +404,7 @@ This skill merges three excellent upstream community skills:
 
 **Plus production lessons** from real iOS app incidents that surfaced:
 
-- The `attConsentWaitingInterval` + `trackEvent` gap (different code paths, both leak)
+- The ATT wait/delay scope gap (MMP queues, direct SDK calls, and backend pipes have different behavior)
 - The capture-protection silent-defer bug (ATT prompt never shows for affected users)
 - The Facebook AppEvents silent-drop on ATT-denied users
 - The dual-API-call requirement for SKAN ↔ AAK interop
@@ -423,9 +423,9 @@ These production incidents are what differentiate this skill from a "merge of th
 [3/10] PrivacyInfo.xcprivacy                   ✓
 [4/10] AdAttributionKit                        ✓
 [5/10] AppsFlyer ATT wait config               ✓
-[6/10] Adjust ATT wait config                  (skipped — Adjust not used)
+[6/10] Adjust ATT wait / first-session delay    (skipped — Adjust not used)
 [7/10] ATT prompt invocation                   ✓
-[8/10] trackEvent / logEvent call sites        ⚠ 14 sites — manual review
+[8/10] unmanaged event call sites              ⚠ 14 sites — manual review
 [8b]  Capture-protection ATT defer            (no findings)
 [8c]  SDK init order                          ✓
 [9/10] SKAN/AAK conversion value updates       ✓
@@ -435,8 +435,8 @@ These production incidents are what differentiate this skill from a "merge of th
 ### Production-class incident project (fictional reproduction)
 
 ```
-[8/10] trackEvent / logEvent call sites + ATT-gating
-✗ 17 trackEvent/logEvent call sites; ~5 file(s) lack any ATT-gating reference
+[8/10] unmanaged event call sites + ATT/privacy-gating
+⚠ 17 marketing event call sites; ~5 file(s) lack obvious ATT/privacy-gating reference
    /Features/Splash/SplashView.swift:39
    /Features/Onboarding/HeroPage.swift:250
    /Features/Onboarding/EffectPickerPage.swift:388
@@ -456,7 +456,7 @@ This skill is at v1.2.0. Recent work:
 
 ### Resolved in v1.2.0
 
-- ✅ **Meta AEM 8-event hierarchy** — replaced with auto-aggregate guidance (Meta retired manual prioritization in June 2025)
+- ✅ **Meta AEM legacy event-priority setup** — replaced with current guidance covering event sharing, mapping, and eligibility
 - ✅ **`Settings.shared.isAdvertiserTrackingEnabled` iOS 17+ deprecation** — wrapped in `if #unavailable(iOS 17) { ... }` blocks
 - ✅ **`NSAdvertisingAttributionReportEndpoint` plist key** — added to pre-launch checklist + AAK reference with provider URL table (Adjust, AppsFlyer, Branch, Singular)
 - ✅ **TikTok integration** — new dedicated `references/tiktok-integration.md` with full init, SKAN ownership decision matrix, hybrid MMP+SDK setup

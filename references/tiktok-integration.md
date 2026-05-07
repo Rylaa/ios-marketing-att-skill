@@ -15,45 +15,46 @@ If you only run TikTok ads, you only need `TikTokBusinessSDK`. If you also offer
 
 ### Recommended version
 
-**1.5+** is the floor for new integrations:
+Use the current 1.5+/1.6.x line for new integrations:
 
 - Token-based Test Events in TikTok Events Manager (no recompile needed to flip test mode)
-- SKAdNetwork 4 + AdAttributionKit support
-- Bundled `PrivacyInfo.xcprivacy` (Apple required tracking domain declarations)
+- SKAdNetwork ownership controls and ATT delay controls
+- Bundled `PrivacyInfo.xcprivacy`
 - Improved deduplication keys for hybrid MMP setups
 
-Older 1.3.x and 1.4.x builds work but lack the privacy manifest — App Store Connect will warn on submission.
+Do not claim AdAttributionKit support unless the current TikTok SDK docs or your MMP integration explicitly confirm it. Older 1.3.7+/1.4.x builds include privacy-manifest support, but new work should not start there.
 
 ## Initialization — Full Swift Example
 
-The init order matters. TikTok auto-reads ATT, so it has to be initialized AFTER the ATT decision is known OR be configured to suppress its own prompt and wait for your central ATT manager.
+The init order matters. Current TikTok SDKs do not actively show the ATT dialog themselves, but they can delay initial flushing while your central ATT manager asks for authorization.
 
 ```swift
 import TikTokBusinessSDK
 import AppTrackingTransparency
 
 func bootstrapTikTok() {
-    let config = TikTokConfig(
-        accessToken: nil,                      // optional; only for server-side hybrid
+    guard let config = TikTokConfig.config(
+        withAccessToken: "TIKTOK_ACCESS_TOKEN", // non-null; from TikTok Events Manager / Marketing API flow
         appId: "1234567890",                   // App Store ID (numeric)
         tiktokAppId: "7XXXXXXXXXXXXXXXXXX"     // TikTok-assigned app ID from Events Manager
-    )
+    ) else { return }
 
     // 1. SKAdNetwork — see ownership matrix below.
     //    If your MMP (AppsFlyer / Adjust / Branch / Singular) owns SKAN, disable here.
-    config?.disableSKAdNetworkSupport()
+    config.disableSKAdNetworkSupport()
 
-    // 2. ATT prompt suppression — STRONGLY recommended for any app with a central ATT manager.
-    //    Without this, TikTok SDK may call ATTrackingManager.requestTrackingAuthorization itself.
-    config?.suppressAppTrackingDialog()
+    // 2. ATT wait — let your own ATT manager own the prompt.
+    //    Current SDK headers mark disableAppTrackingDialog as deprecated because
+    //    the SDK no longer actively calls the ATT dialog.
+    config.setDelayForATTUserAuthorizationInSeconds(60)
 
     // 3. (Optional) Disable automatic event tracking — useful if you wire events manually
-    //    via TikTokBusiness.trackEvent(...) for stricter consent gating.
-    // config?.disableAutomaticTracking()
+    //    via TikTokBusiness.trackTTEvent(...) for stricter consent gating.
+    // config.disableAutomaticTracking()
 
-    // 4. (Optional) Cold-start kill switch — if user has not yet consented, you can
-    //    initialize the SDK in dormant mode and flip it on after ATT decision.
-    // config?.disableTracking()
+    // 4. Do not use disableTracking as "dormant mode" unless you intend to stop
+    //    tracking before init; disabled tracking can make events stay cached until
+    //    tracking is explicitly enabled.
 
     TikTokBusiness.initializeSdk(config) { success, error in
         if let error = error {
@@ -68,9 +69,9 @@ func bootstrapTikTok() {
 func tikTokATTUpdated(status: ATTrackingManager.AuthorizationStatus) {
     switch status {
     case .authorized:
-        TikTokBusiness.setTrackingEnabled(true)   // start sending IDFA-bearing events
+        TikTokBusiness.setTrackingEnabled(true)   // allow event sending when privacy rules allow
     case .denied, .restricted, .notDetermined:
-        TikTokBusiness.setTrackingEnabled(false)  // SKAN-only path
+        TikTokBusiness.setTrackingEnabled(false)  // events stay cached; use only if this is your consent policy
     @unknown default:
         TikTokBusiness.setTrackingEnabled(false)
     }
@@ -84,10 +85,10 @@ func tikTokATTUpdated(status: ATTrackingManager.AuthorizationStatus) {
 The TikTok SDK is ATT-aware out of the box. Three things you need to know:
 
 1. **It auto-reads ATT status.** No need to pass IDFA manually — when authorized, SDK reads it via `ASIdentifierManager` itself.
-2. **`suppressAppTrackingDialog()` blocks TikTok's built-in prompt.** Without it, on first init TikTok may call `ATTrackingManager.requestTrackingAuthorization` on its own schedule. Almost always undesired in apps that already manage ATT centrally — you get a duplicate or out-of-context prompt.
-3. **`setTrackingEnabled(true)` is the on-switch after ATT granted.** Until it's called, IDFA-bearing payloads are not sent even if ATT is authorized. SKAN postbacks still work either way.
+2. **`disableAppTrackingDialog` / `appTrackingDialogSuppressed` is deprecated.** Current public headers say the SDK will not actively call the ATT dialog. Use your own ATT manager and `setDelayForATTUserAuthorizationInSeconds` if you need a wait window.
+3. **`setTrackingEnabled(false)` disables event sending and keeps events cached until re-enabled.** It is not just an "IDFA off" switch. Use it only when your consent policy requires pausing TikTok event delivery.
 
-If you forget `suppressAppTrackingDialog()` and your app also calls `ATTrackingManager.requestTrackingAuthorization` from your own ATT manager, iOS will only show one prompt (the system dedupes), but the timing becomes nondeterministic — TikTok's may fire mid-onboarding before you wanted it.
+If your app wants IDFA-based TikTok signals, call your own `ATTrackingManager.requestTrackingAuthorization` at the right moment and let the SDK read the resulting status.
 
 ## SKAN Ownership Decision Matrix
 
@@ -111,10 +112,10 @@ The CV schema you upload to TikTok Events Manager (when applicable) should match
 TikTok Business SDK supports hybrid: events forwarded **both** via your MMP (S2S) and via the SDK directly. TikTok deduplicates by `event_id`.
 
 ```swift
-let event = TikTokBaseEvent(name: "Purchase", eventId: "purchase-uuid-12345")
-event.addProperty("currency", value: "USD")
-event.addProperty("value", value: 9.99)
-TikTokBusiness.trackEvent(event)
+let event = TikTokBaseEvent(eventName: "Purchase", eventId: "purchase-uuid-12345")
+event.addProperty(withKey: "currency", value: "USD")
+event.addProperty(withKey: "value", value: 9.99)
+TikTokBusiness.trackTTEvent(event)
 ```
 
 Your MMP must forward the **same** `event_id` for the same logical event. AppsFlyer/Adjust/Branch all support a custom `event_id` field — set it explicitly to your client-generated UUID.
@@ -184,7 +185,7 @@ From SDK 1.5+, Test Events use **token-based** activation in TikTok Events Manag
 - **TikTok app ID misconfigured.** `tiktokAppId` is the TikTok-assigned ID from Events Manager (long numeric, e.g. `7XXXXXXXXXXXXXXXXXX`), NOT your App Store ID. Apps regularly swap them.
 - App Store ID (`appId`) wrong — should be the numeric App Store ID, not bundle identifier.
 - App not associated with TikTok Ads account in Events Manager → Assets.
-- SDK initialized but `setTrackingEnabled(false)` and ATT denied → expected SKAN-only flow, not a bug.
+- SDK initialized with `setTrackingEnabled(false)` → events stay cached until tracking is re-enabled; do not confuse this with an automatic SKAN-only mode.
 
 ### "SKAN postbacks dropped"
 
@@ -197,10 +198,10 @@ From SDK 1.5+, Test Events use **token-based** activation in TikTok Events Manag
 - Both MMP and TikTok SDK reporting installs without dedup. Pick one as system of record.
 - Hybrid setup with mismatched `event_id` between SDK and MMP forwarding.
 
-### "ATT prompt appearing twice" / "appears unexpectedly mid-flow"
+### "ATT prompt appears unexpectedly mid-flow"
 
-- `suppressAppTrackingDialog()` not set in TikTok config.
-- TikTok SDK initialized before your ATT manager registered, and TikTok's prompt fired first.
+- Current TikTok SDK headers say the SDK does not actively call ATT, so first check your own ATT manager, another SDK, or stale wrapper code still calling `requestTrackingAuthorization`.
+- Remove stale ATT-dialog suppression assumptions from wrappers; use `setDelayForATTUserAuthorizationInSeconds` for TikTok wait behavior.
 
 ### "TikTok dashboard CV ≠ MMP dashboard CV"
 
@@ -208,27 +209,19 @@ From SDK 1.5+, Test Events use **token-based** activation in TikTok Events Manag
 
 ## TikTok-Specific SKAdNetwork IDs (Info.plist)
 
-Add to `Info.plist` under `SKAdNetworkItems`:
+Do not hardcode a static TikTok ID list from this skill. TikTok/MMP SKAN IDs change, and apps often need the full MMP master list rather than a few TikTok anchors. Pull the current list from TikTok Events Manager or your MMP's current SKAN ID export and add it under `SKAdNetworkItems` when your app or partner setup requires it.
 
 ```xml
 <key>SKAdNetworkItems</key>
 <array>
     <dict>
         <key>SKAdNetworkIdentifier</key>
-        <string>252b5q8x7y.skadnetwork</string>
-    </dict>
-    <dict>
-        <key>SKAdNetworkIdentifier</key>
-        <string>59vjd3p6cw.skadnetwork</string>
-    </dict>
-    <dict>
-        <key>SKAdNetworkIdentifier</key>
-        <string>k674qkevps.skadnetwork</string>
+        <string>current-id-from-mmp-or-tiktok.skadnetwork</string>
     </dict>
 </array>
 ```
 
-> **Pull from MMP master list quarterly.** TikTok rotates and adds SKAN IDs as they expand attribution coverage. AppsFlyer, Adjust, Branch, and Singular each publish a master list of all ~200+ active network IDs — sync your `Info.plist` against that list every quarter. The three above are the TikTok-specific anchors, but the full list is what most apps actually ship.
+> **Pull from MMP master list quarterly.** TikTok rotates and adds SKAN IDs as they expand attribution coverage. AppsFlyer, Adjust, Branch, and Singular each publish master lists; sync your `Info.plist` against the list that matches your chosen SKAN owner.
 
 ## Verification Checklist
 
@@ -236,7 +229,7 @@ A healthy TikTok iOS integration has:
 
 - TikTok Business SDK 1.5+ in Podfile, not OpenSDK (unless also doing share/login)
 - `TikTokBusinessSDK` initialized from `didFinishLaunchingWithOptions`
-- `suppressAppTrackingDialog()` set unless you intentionally delegate ATT to TikTok
+- No stale ATT-dialog suppression wrapper usage; use TikTok's ATT delay setting and your central ATT manager
 - SKAN ownership decided once, configured on both sides per matrix
 - `tiktokAppId` and `appId` distinct values, both numeric
 - TikTok SKAdNetwork IDs in `Info.plist`, MMP master list synced

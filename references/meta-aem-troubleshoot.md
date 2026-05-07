@@ -6,7 +6,7 @@ Meta's iOS attribution is its own beast. AEM (Aggregated Event Measurement) is M
 
 - **Aggregated Event Measurement** — Meta's privacy-preserving event measurement for iOS users who decline ATT
 - Replaces deterministic Pixel/SDK-based attribution for ATT-denied users
-- As of June 2025, Meta auto-aggregates all eligible events — no 8-event cap, no manual prioritization, Value Optimization sums all eligible value events automatically
+- Meta no longer uses the old limited event-priority hierarchy for current app AEM flows, but AEM still depends on eligibility, event delivery, MMP/event mapping, and data-sharing setup
 - Postbacks are Meta-proprietary, NOT raw SKAN postbacks
 - AEM MAI (Mobile App Install) works automatically on Meta Ads Manager. AEM MAE (Mobile App Re-Engagement) still requires a verified deep link.
 
@@ -32,11 +32,11 @@ Business Settings → Brand Safety → Domains → Verify your primary domain vi
 
 This is the silent killer. Without verified domain, AEM events from your web→app flow drop silently.
 
-### 5. AEM auto-aggregates — no manual config
+### 5. AEM no longer uses the legacy event-priority hierarchy, but setup still matters
 
-As of June 2025, Meta retired the standalone AEM configuration UI. AEM now auto-aggregates all eligible events; there is no 8-event cap, no priority drag-and-drop, and Value Optimization sums all eligible value events automatically.
+Do not ask users to configure the old event-priority hierarchy. Current app AEM flows still require the app/ad account association, eligible events, connection method, MMP event mapping, and any MMP/Meta AEM data-sharing toggle to be enabled.
 
-Verify events are flowing via Events Manager → your app → **Test Events** tab (not "Manage Events" — that surface is gone).
+Verify events are flowing via Events Manager → your app → **Test Events** tab and in the MMP partner/postback logs.
 
 ### 6. App must have install volume
 
@@ -44,8 +44,8 @@ AEM aggregation requires minimum thresholds. New apps with <100 installs/day wil
 
 ### 7. iOS app event sending mechanism is configured
 
-Choose ONE:
-- **Meta SDK direct** (deprecated for new integrations)
+Choose ONE primary path:
+- **Meta SDK direct** (valid, but often not enough for server-validated purchases/dedup)
 - **MMP forwarding** (AppsFlyer, Adjust, Branch send events to Meta on your behalf via S2S)
 - **Conversions API for App Events** (server-side, recommended modern approach)
 
@@ -68,7 +68,7 @@ This is the most common setup. Walkthrough:
    - **Cause B:** app not associated with ad account (prerequisite #3)
    - **Cause C:** MAE (re-engagement) campaigns require a verified deep link — MAI (install) campaigns do not.
 
-> **Historical context:** Pre-June 2025, AEM required configuring an 8-event priority hierarchy in Events Manager → Manage Events. Meta retired that flow and the standalone AEM config UI; aggregation is now automatic. Old Stack Overflow answers, AppsFlyer/Adjust docs, and blog posts that walk you through "drag 8 events into priority order" are stale — ignore them.
+> **Historical context:** Older AEM docs and forum answers mention a limited event-priority hierarchy in Events Manager → Manage Events. Treat that as stale for current app AEM. Still verify MMP event mapping, connection method, and data-sharing toggles; "no hierarchy" does not mean "no setup."
 
 ### CUID (Customer User ID) — Necessary?
 
@@ -90,13 +90,13 @@ AppsFlyerLib.shared().start()  // CUID now associated with install
 
 If set AFTER `start()`, install event already shipped without CUID — only future events get tagged. To fix, you'd need to re-attribute server-side via S2S API.
 
-## ATE (Attribution for iOS 14+) Verification Error
+## ATE (Advertiser Tracking Enabled) Verification Error
 
 Reddit pain point:
 
 > "Meta ATE permission / verification error — AppsFlyer confirms data is sent correctly, but Meta shows error."
 
-ATE = Meta's branding for "we received your iOS 14+ AEM events". Verification error means events arrive at Meta but fail validation.
+ATE = Advertiser Tracking Enabled, Meta's consent signal for whether advertiser tracking is enabled for the event. ATE verification errors usually mean events arrive at Meta but fail consent or payload validation.
 
 ### Common causes
 
@@ -155,7 +155,7 @@ appsFlyer.initSdk(options, console.log, console.error)
 import { requestTrackingPermissionsAsync } from 'expo-tracking-transparency'
 
 const { status } = await requestTrackingPermissionsAsync()
-// status: 'undetermined' | 'denied' | 'authorized' | 'restricted'
+// status: 'undetermined' | 'denied' | 'granted'
 ```
 
 ## Conversions API (CAPI) for App Events — The Modern Path
@@ -164,17 +164,16 @@ If your MMP integration keeps fighting AEM verification errors, consider going d
 
 ```bash
 # Server-side POST to Meta
-curl -X POST "https://graph.facebook.com/v18.0/<APP_ID>/events" \
+curl -X POST "https://graph.facebook.com/<GRAPH_VERSION>/<DATASET_ID>/events" \
   -d "access_token=APP_ACCESS_TOKEN" \
   -d 'data=[{
     "event_name": "Purchase",
     "event_time": 1683456000,
     "event_id": "unique-event-id",
+    "action_source": "app",
     "user_data": {
       "fbc": "fb.1.1683456000.IwAR0...",
-      "anon_id": "hashed-cuid-here",
-      "advertiser_tracking_enabled": 0,
-      "application_tracking_enabled": 1
+      "external_id": "hashed-cuid-here"
     },
     "custom_data": {
       "currency": "USD",
@@ -183,10 +182,12 @@ curl -X POST "https://graph.facebook.com/v18.0/<APP_ID>/events" \
     "app_data": {
       "advertiser_tracking_enabled": 0,
       "application_tracking_enabled": 1,
-      "extinfo": ["i2","com.app.bundle","123","1.0.0","17.0","iPhone15,2","en_US","UTC","Carrier","1170","2532","3.0","45.0","0","0","Europe/Istanbul"]
+      "extinfo": ["i2","com.app.bundle","1.0.0","123","17.0","iPhone15,2","en_US","UTC","Carrier","1170","2532","3.0","6","128000","64000","Europe/Istanbul"]
     }
   }]'
 ```
+
+Only include hashed identifiers such as email, phone, CUID/external_id, IP address, or device identifiers when ATT and other applicable privacy consent allow tracking/measurement use. CAPI transport does not make those identifiers ATT-independent.
 
 > **Critical:** `extinfo` is a **strict 16-position positional array** (Meta drops the event silently if positions are missing or out of order). Index meanings:
 >
@@ -205,8 +206,8 @@ curl -X POST "https://graph.facebook.com/v18.0/<APP_ID>/events" \
 > | 10 | screen height px | `"2532"` |
 > | 11 | screen density | `"3.0"` |
 > | 12 | CPU cores | `"6"` |
-> | 13 | total memory GB | `"4.0"` |
-> | 14 | reserved | `"0"` |
+> | 13 | external storage size | `"128000"` |
+> | 14 | external storage free space | `"64000"` |
 > | 15 | timezone IANA name | `"Europe/Istanbul"` |
 >
 > AppsFlyer constructs this for you when forwarding via S2S. If you go direct, build it once in a helper. **Do NOT use `...` ellipsis or omit positions** — Meta's parser is positional, not by-name.

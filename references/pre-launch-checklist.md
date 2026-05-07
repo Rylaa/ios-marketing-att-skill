@@ -9,7 +9,8 @@ Walk through this BEFORE first paid UA spend. Each unchecked item is a future "w
 <key>NSUserTrackingUsageDescription</key>
 <string>We measure which marketing brought you here so we can make better content. Your data is never sold and you can change this in Settings.</string>
 
-<!-- Required for SKAdNetwork postbacks -->
+<!-- Source/publisher apps that show ads: SKAN ad network IDs. -->
+<!-- Advertiser apps: include only when your MMP/ad partners require a current list. -->
 <key>SKAdNetworkItems</key>
 <array>
     <dict>
@@ -19,7 +20,7 @@ Walk through this BEFORE first paid UA spend. Each unchecked item is a future "w
     <!-- Add ALL ad networks you may use; MMPs maintain master lists -->
 </array>
 
-<!-- Required for SKAN postback COPIES to MMP/your server (top-level key) -->
+<!-- Optional but recommended for SKAN postback COPIES to MMP/your server (top-level key) -->
 <!-- ⚠️ Different from AdAttributionKit > AttributionCopyEndpoint below. -->
 <!-- ⚠️ ONLY ONE value allowed. Last writer wins → set to MMP OR custom, not both. -->
 <key>NSAdvertisingAttributionReportEndpoint</key>
@@ -29,15 +30,12 @@ Walk through this BEFORE first paid UA spend. Each unchecked item is a future "w
 <!-- Branch:     check Branch's docs                    -->
 <!-- Singular:   check Singular's docs                  -->
 
-<!-- Required for AdAttributionKit (iOS 17.4+) -->
-<!-- AttributionCopyEndpoint below is AAK-specific — separate from the SKAN key above. -->
-<key>AdAttributionKit</key>
-<dict>
-    <key>AttributionCopyEndpoint</key>
-    <string>https://attribution.yourdomain.com</string>
-    <key>OptInForReengagementPostbackCopies</key>
-    <true/>
-</dict>
+<!-- Optional but recommended for AdAttributionKit postback copies (iOS 17.4+) -->
+<!-- AttributionCopyEndpoint below is AAK-specific and top-level. -->
+<key>AttributionCopyEndpoint</key>
+<string>https://attribution.yourdomain.com</string>
+<key>EligibleForAdAttributionKitReengagementPostbackCopies</key>
+<true/>
 
 <!-- Optional: if your app shows ads (publisher) -->
 <key>AdNetworkIdentifiers</key>
@@ -48,18 +46,18 @@ Walk through this BEFORE first paid UA spend. Each unchecked item is a future "w
 ```
 
 - [ ] `NSUserTrackingUsageDescription` present, specific (not vague), under 200 chars
-- [ ] `SKAdNetworkItems` populated with full master list (50-100 entries typical)
+- [ ] `SKAdNetworkItems` populated when this app shows ads, or when current MMP/ad partner docs require partner IDs for compatibility
 - [ ] `NSAdvertisingAttributionReportEndpoint` set (SKAN postback copies to MMP/your server) — see `adattributionkit-and-skan.md` for provider URL table
   - [ ] Only ONE value present (Apple plist only allows one — the LAST one wins, so a stale custom URL silently breaks MMP postback copies, or vice versa)
   - [ ] If using an MMP: value matches that MMP's published endpoint (Adjust → `https://adjust-skadnetwork.com/`, AppsFlyer → `https://appsflyer-skadnetwork.com/`, Branch/Singular → check their docs)
-  - [ ] Without this key: Apple sends SKAN postbacks ONLY to the ad network — your MMP cannot verify postbacks server-side
-- [ ] `AdAttributionKit` block present if targeting iOS 17.4+
-- [ ] `AttributionCopyEndpoint` (AAK-specific, inside `AdAttributionKit` dict — DIFFERENT from `NSAdvertisingAttributionReportEndpoint` above) HTTPS-only with valid TLS cert
+  - [ ] Without this key: Apple does not send a direct SKAN postback copy to your endpoint; MMP partner forwarding may still exist
+- [ ] `AttributionCopyEndpoint` (AAK-specific, top-level — DIFFERENT from `NSAdvertisingAttributionReportEndpoint` above) HTTPS-only with valid TLS cert if you want AAK postback copies
+- [ ] `EligibleForAdAttributionKitReengagementPostbackCopies` set only if you are eligible for and want AAK re-engagement postback copies
 - [ ] If using Apple Search Ads: `AdServices.framework` linked
 
 ## Phase 2 — Privacy Manifest (PrivacyInfo.xcprivacy)
 
-Required since iOS 17 for App Store submission. Marketing-relevant entries:
+Required-reason API and privacy manifest declarations matter for App Store submission, especially for third-party SDKs on Apple's required-SDK list. Marketing-relevant entries:
 
 ```xml
 <dict>
@@ -70,7 +68,7 @@ Required since iOS 17 for App Store submission. Marketing-relevant entries:
     <array>
         <string>app.appsflyersdk.com</string>
         <string>app.adjust.com</string>
-        <!-- Add all marketing/analytics domains -->
+        <!-- Add domains used for tracking; do not dump every analytics endpoint here -->
     </array>
 
     <key>NSPrivacyAccessedAPITypes</key>
@@ -106,7 +104,7 @@ Required since iOS 17 for App Store submission. Marketing-relevant entries:
 
 - [ ] `PrivacyInfo.xcprivacy` exists in app target
 - [ ] `NSPrivacyTracking` matches actual ATT prompt presence
-- [ ] `NSPrivacyTrackingDomains` includes EVERY marketing/analytics SDK domain
+- [ ] `NSPrivacyTrackingDomains` includes domains used for tracking when `NSPrivacyTracking` is true
 - [ ] `NSPrivacyAccessedAPITypes` declares reasons for: UserDefaults, file timestamp, system boot time, disk space, active keyboards (any SDK uses them)
 - [ ] `NSPrivacyCollectedDataTypes` declares all collected types with purpose
 - [ ] Dependent SDKs each have their own `PrivacyInfo.xcprivacy` (Apple now requires this for SDKs too)
@@ -167,26 +165,28 @@ let adjustConfig = ADJConfig(
     appToken: "YOUR_TOKEN",
     environment: ADJEnvironmentProduction
 )
+// Option A:
 adjustConfig?.attConsentWaitingInterval = 120  // max 360s
-adjustConfig?.enableFirstSessionDelay()        // method call, not property
+
+// Option B (SDK 5.3.0+): use instead of attConsentWaitingInterval
+// adjustConfig?.enableFirstSessionDelay()      // method call, not property
 
 Adjust.initSdk(adjustConfig)                   // v5 (v4 used appDidLaunch)
 
-// After ATT prompt resolves:
-Adjust.endFirstSessionDelay()
+// If Option B is used, after ATT prompt or your own consent/data enrichment resolves:
+// Adjust.endFirstSessionDelay()
 ```
 
-- [ ] `attConsentWaitingInterval` set (recommended 120s; max 360s)
+- [ ] Choose exactly one Adjust delay mechanism: `attConsentWaitingInterval` OR `enableFirstSessionDelay()` (first-session delay ignores ATT waiting interval)
 - [ ] Adjust SDK v5.x current line; v4.34.0 minimum if cannot upgrade
-- [ ] `enableFirstSessionDelay()` called on v5+ (method, not property)
-- [ ] `endFirstSessionDelay()` called after ATT prompt
+- [ ] If using first-session delay: SDK 5.3.0+ and `endFirstSessionDelay()` called after ATT prompt or consent/data enrichment
 - [ ] Production environment used in production builds
 
 ## Phase 5 — ATT Prompt Implementation
 
 - [ ] Pre-permission screen implemented (lifts opt-in 15-25%)
 - [ ] Prompt fires AFTER user invests in app (not first frame on cold start, unless using Defense 1+2 from `att-timing-and-events.md`)
-- [ ] All marketing SDK init gated behind ATT resolution (see `consent-gating.md`)
+- [ ] Marketing SDK init and event sending follow each SDK's ATT wait/consent model; unmanaged event pipes are gated behind ATT/privacy resolution (see `consent-gating.md`)
 - [ ] Settings deep-link added so users can change choice later
 - [ ] No "Allow"/"Deny" custom buttons that mimic system dialog (App Review rejects)
 - [ ] Test: install on device with iOS 14.5+, accept → check IDFA non-zero
@@ -207,7 +207,7 @@ Adjust.endFirstSessionDelay()
 - [ ] App added to Meta Business Manager
 - [ ] App associated with ad account (Business Settings → Apps → Assigned Assets)
 - [ ] Domain verified (Brand Safety → Domains)
-- [ ] AEM 8-event hierarchy configured in Events Manager
+- [ ] AEM event sharing/toggle and event mapping configured in Meta/MMP; no legacy event-priority hierarchy required
 - [ ] AEM toggle visible in Ads Manager when creating campaign
 - [ ] Test: real device install → event appears in Meta Events Manager Test Events tab within 30s
 
@@ -256,7 +256,7 @@ Adjust.endFirstSessionDelay()
 1. **DevKey/AppToken in wrong environment.** Sandbox vs production keys are different. Dev key in prod build = no data.
 2. **Plugin/SDK version mismatch.** RN/Flutter/Expo plugin versions can lag native SDK. Check plugin's native dependency version.
 3. **PrivacyInfo not bundled in app target.** Drag the file in Xcode → ensure target membership ticked.
-4. **TestFlight builds bypass App Tracking Transparency** in some iOS versions. Always test final attribution on App Store Connect TestFlight build, not local dev build.
+4. **TestFlight/local builds do not exercise real paid attribution paths.** Use MMP test tools for smoke tests, then validate final attribution on production App Store traffic.
 5. **App Clip vs full app: separate App ID, separate ATT prompt, separate SKAN setup.** Don't conflate.
 
 ## Related

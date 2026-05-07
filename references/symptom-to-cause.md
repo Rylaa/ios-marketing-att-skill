@@ -6,7 +6,7 @@ When user describes a problem with vague symptoms, walk this table top-to-bottom
 |---|---|---|
 | "Installs going Organic in MMP" | ATT timing — install payload sent before ATT response, IDFA all zeros | `att-timing-and-events.md` |
 | "Most installs Organic, paid spend looks wasted" | Same as above + missing AdAttributionKit fallback | `att-timing-and-events.md` + `adattributionkit-and-skan.md` |
-| "Events going Organic but install OK" | `attConsentWaitingInterval` set but `trackEvent` calls bypass it | `att-timing-and-events.md` (Defense 2) |
+| "Events going Organic but install OK" | Event pipe is outside the SDK wait queue, or emitted before wait/consent config | `att-timing-and-events.md` (Defense 2) |
 | "Install attributed but in-app events missing" | Events firing before SDK init OR consent flag not set | `consent-gating.md` |
 | "Meta AEM doesn't appear in Ads Manager" | Prerequisite not met: domain/event/ad-account assoc | `meta-aem-troubleshoot.md` (Prerequisites) |
 | "Meta ATE verification error" | Payload param missing OR hashing mismatch OR app ID mismatch | `meta-aem-troubleshoot.md` (ATE section) |
@@ -20,7 +20,7 @@ When user describes a problem with vague symptoms, walk this table top-to-bottom
 | "iOS users show much lower CTR than Android" | Different — likely creative or audience, not attribution | Out of scope; use `app-ads` skill |
 | "Push notification deep links not attributing" | Different domain | Use `mobile-deep-linking-specialist` skill |
 | "Web → app install attribution missing" | Domain not verified in Meta + branch link config | `meta-aem-troubleshoot.md` Prerequisite #4 + delegate to deep-linking |
-| "TestFlight installs not showing in MMP" | TestFlight bypasses ATT in some iOS versions; AEM doesn't activate | Expected; verify on App Store TestFlight build, not local |
+| "TestFlight installs not showing in MMP" | TestFlight/local installs do not exercise real paid attribution and AEM doesn't activate pre-release | Expected; verify with production App Store attribution paths / MMP test tools |
 | "Privacy review rejection in App Review" | `PrivacyInfo.xcprivacy` mismatch with actual SDK behavior | `pre-launch-checklist.md` Phase 2 + delegate to `app-store-review` |
 | "Apple's `idfa=00000000-...` for ATT-authorized user" | Reset IDFA in Settings → app reads cached value | Do NOT cache IDFA; read fresh at event-send via `ASIdentifierManager.shared().advertisingIdentifier` |
 | "80% Apple Ads installs show as Organic" | AdServices API token not fetched/forwarded to MMP | `apple-ads-audit.md` (AdServices API section) |

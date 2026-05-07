@@ -26,7 +26,7 @@ Standard 5-stage flow this skill follows for any task. Use this BEFORE the decis
 | Which channels active? (Apple Ads / Meta / Google / TikTok / Snap / others) | Routes to channel-specific reference |
 | iOS minimum deployment target? | Determines AAK availability (iOS 17.4+), iOS 18 PostbackUpdate API |
 | Subscription / IAP / e-commerce / utility? | Determines CV encoding strategy |
-| Live in App Store, TestFlight, or local dev? | TestFlight bypasses ATT; AEM doesn't activate pre-release |
+| Live in App Store, TestFlight, or local dev? | TestFlight/local builds do not exercise real paid install, AdServices, SKAN/AAK, or AEM production paths |
 | Symptom or goal? (debug vs new setup vs audit) | Routes to right decision tree branch |
 
 **Project-state checks (run in parallel if you have project access):**
@@ -83,12 +83,12 @@ Once routed:
 1. **Read the chosen reference file FULLY.** Don't skim. Each one is short (5-10K) and dense.
 2. **Match the user's specific situation against named patterns** in that file (e.g., "Failure Mode 2", "Capture-Protection bug", "ATE verification error").
 3. **For code-level diagnosis:** if you have project access, grep for the exact symbol the reference highlights:
-   - `attConsentWaitingInterval`, `waitForATTUserAuthorization`, `setAttConsentWaitingInterval`
+   - `attConsentWaitingInterval`, `enableFirstSessionDelay`, `waitForATTUserAuthorization`, `setAttConsentWaitingInterval`
    - `Adjust.initSdk`, `Adjust.appDidLaunch`, `AppsFlyerLib.shared().start`
    - `requestTrackingAuthorization`, `requestTrackingPermissionsAsync`
    - `AppEvents.shared.logEvent`, `Adjust.trackEvent`, `appsFlyer.logEvent`
    - `isCaptured`, `Postback.updateConversionValue`, `SKAdNetwork.updatePostbackConversionValue`
-   - `AAAttribution.attributionToken`, `setAppleAdsAttributionToken`
+   - `AAAttribution.attributionToken`, MMP AdServices / Apple Ads integration settings
 4. **Cite file:line in the user's project** when explaining root cause. Concrete > abstract.
 5. **If the reference points to another reference** (Related section), follow only if the current file doesn't fully answer the question.
 
@@ -121,8 +121,8 @@ Three modes depending on user request:
 
 ### Mode B: Recommendation (user wants advice, not edits)
 
-1. Produce a concrete patch description: "in `Config/Adjust/AdjustConfiguration.swift:689`, change `config?.attConsentWaitingInterval = 120` to `config?.attConsentWaitingInterval = 120` AND add `config?.enableFirstSessionDelay()` immediately after"
-2. Show what behavior the patch fixes (e.g., "splash_view event no longer fires before ATT resolves")
+1. Produce a concrete patch description: "in `Config/Adjust/AdjustConfiguration.swift:689`, choose `config?.attConsentWaitingInterval = 120` OR `config?.enableFirstSessionDelay()`; do not combine both because first-session delay ignores the ATT wait interval"
+2. Show what behavior the patch fixes (e.g., "first session is held until ATT/consent resolves, and unmanaged event pipes are gated separately")
 3. Provide verification steps for them to run after applying
 
 ### Mode C: Audit (user wants score, not fixes)
@@ -216,7 +216,7 @@ If any verification step fails, return to Stage 3 (DIAGNOSE) with the new sympto
 
 ```
 1. CONTEXT      → ask: app published? Business Manager assoc? domain verified?
-                  AEM 8-event hierarchy set?
+                  AEM/event sharing and MMP event mapping enabled?
 2. ROUTE        → meta-aem-troubleshoot.md (Prerequisites section)
 3. DIAGNOSE     → walk 7-step prerequisite checklist
 4. ACT          → identify which prereq is missing → user fixes via Meta UI
@@ -266,11 +266,11 @@ This workflow assumes:
 - iOS 17.4+ (AdAttributionKit baseline) — most checks; iOS 18+ for `PostbackUpdate` API
 - Adjust v5.x current; v4.34+ minimum
 - AppsFlyer 6.14+ for full SKAN 4 + AAK
-- Apple Ads dual-attribution (Apr 2025+) assumed
+- Apple Ads AdServices and privacy-preserving postback paths considered separately; do not assume raw double logs for every install
 - Maximize Conversions GA (Feb 2026+) acknowledged but not yet ROAS-optimizing
 
 When versions drift:
 - Refresh `pre-launch-checklist.md` Phase 4 SDK code samples
 - Update `att-timing-and-events.md` API examples
-- Re-verify `apple-ads-audit.md` AdServices code
+- Re-verify `apple-ads-audit.md` AdServices and MMP-specific guidance
 - Bump `metadata.updated` in SKILL.md

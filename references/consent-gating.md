@@ -6,14 +6,14 @@ Once ATT resolves, every marketing SDK must do something different per state. Sk
 
 | State | AppsFlyer | Adjust | Meta SDK | Firebase Analytics | AdMob | Crashlytics |
 |---|---|---|---|---|---|---|
-| `.authorized` | `start()` full | `appDidLaunch` full | (iOS <17 only) `Settings.isAdvertiserTrackingEnabled = true` | `setAnalyticsCollectionEnabled(true)` | `setRequestConfiguration` with personalized ads | `setCrashlyticsCollectionEnabled(true)` (independent) |
-| `.denied` | `start()` (SKAN-only mode auto) | `appDidLaunch` (SKAN auto) | (iOS <17 only) `Settings.isAdvertiserTrackingEnabled = false`; AEM-only | `setAnalyticsCollectionEnabled(true)` (own consent) | non-personalized ads | unchanged |
-| `.notDetermined` | **DO NOT START** until resolved | **DO NOT START** until resolved | (iOS <17 only) `Settings.isAdvertiserTrackingEnabled = false` | own consent flag | non-personalized | unchanged |
-| `.restricted` | `start()` SKAN-only | `appDidLaunch` SKAN-only | (iOS <17 only) tracking off | own consent | non-personalized | unchanged |
+| `.authorized` | `start()` full after wait config | `initSdk()` full after delay config | (iOS <17 only) `Settings.isAdvertiserTrackingEnabled = true` | Enable only under your analytics/ad consent model | UMP/CMP consent + personalized ads if allowed | `setCrashlyticsCollectionEnabled(true)` (independent) |
+| `.denied` | `start()` limited/SKAN mode | `initSdk()` limited/SKAN mode | (iOS <17 only) `Settings.isAdvertiserTrackingEnabled = false`; AEM/S2S path | Enable only for non-tracking first-party analytics use; disable ad personalization/integration as required | UMP/CMP consent + non-personalized/limited ads | unchanged |
+| `.notDetermined` | Configure wait first; do not send unmanaged events | Configure ATT wait OR first-session delay first; do not combine both | (iOS <17 only) `Settings.isAdvertiserTrackingEnabled = false`; queue app events | Apply Firebase consent defaults before collection starts | UMP/CMP before ad requests | unchanged |
+| `.restricted` | `start()` limited/SKAN mode | `initSdk()` limited/SKAN mode | (iOS <17 only) tracking off | Same as denied | Same as denied | unchanged |
 
 **iOS 17+ note:** On iOS 17+, the Meta SDK reads `ATTrackingManager.trackingAuthorizationStatus` automatically. The `Settings.shared.isAdvertiserTrackingEnabled` setter is deprecated and a no-op. Wrap legacy calls in `if #unavailable(iOS 17) { ... }`.
 
-**Critical:** Crashlytics + Firebase Analytics consent is **independent** from ATT. ATT governs cross-app tracking. Analytics/crash are first-party — your privacy policy + in-app consent gate them, not ATT.
+**Critical:** Crashlytics is largely independent from ATT, but Firebase Analytics is not automatically "ATT-free." Firebase can collect IDFV and may use IDFA when present; Google Ads linking, ad personalization, and remarketing require the appropriate Firebase/Google consent controls in addition to ATT. Treat Firebase Analytics as first-party only when you have disabled ad-use paths and your privacy disclosures match that use.
 
 ## Pre-Permission Prompt Pattern (Apple-approved, opt-in lift +15-25%)
 
@@ -121,8 +121,14 @@ final class MarketingStack {
             didFinishLaunchingWithOptions: nil
         )
 
-        // Firebase Analytics (separate consent gate)
+        // Firebase Analytics (separate analytics/ad consent gate)
         if userConsentedToAnalytics {
+            Analytics.setConsent([
+                .analyticsStorage: .granted,
+                .adStorage: .granted,
+                .adUserData: .granted,
+                .adPersonalization: .granted
+            ])
             Analytics.setAnalyticsCollectionEnabled(true)
         }
     }
@@ -138,12 +144,19 @@ final class MarketingStack {
             Settings.shared.isAdvertiserTrackingEnabled = false
         }
 
-        // Firebase Analytics (still own consent)
+        // Firebase Analytics (still own consent; keep ad-use disabled if not consented)
         if userConsentedToAnalytics {
+            Analytics.setConsent([
+                .analyticsStorage: .granted,
+                .adStorage: .denied,
+                .adUserData: .denied,
+                .adPersonalization: .denied
+            ])
             Analytics.setAnalyticsCollectionEnabled(true)
         }
 
-        // AdMob → non-personalized
+        // AdMob: npa=1 is only a request parameter. Use UMP/CMP consent and
+        // request limited/non-personalized ads according to the user's choices.
         let request = GADRequest()
         let extras = GADExtras()
         extras.additionalParameters = ["npa": "1"]
@@ -163,7 +176,7 @@ Settings.shared.isAdvertiserTrackingEnabled = (status == .authorized)
 AppEvents.shared.logEvent(.viewedContent)  // dropped if denied, no log
 ```
 
-Fix: route Meta events through your own analytics layer that ALWAYS forwards to a backend, then forwards to Meta's Conversions API server-side. The Meta SDK becomes a fallback, not the primary path.
+Fix: route Meta events through your own analytics layer that forwards eligible events to a backend, then to Meta's Conversions API for App Events when ATT and other applicable privacy consent allow it. The Meta SDK becomes a fallback for ATT-authorized users, not the only path.
 
 ```swift
 // ✅ GOOD — always send to your backend first
@@ -178,11 +191,11 @@ func logMarketingEvent(_ event: MarketingEvent) {
 }
 ```
 
-Backend then forwards to Meta Conversions API with hashed user identifiers — works regardless of ATT.
+Backend then forwards to Meta Conversions API for App Events only with the right consent basis. Hashed email, phone, CUID, IP address, device IDs, and other identifiers can still be "tracking" under Apple's ATT policy when linked with third-party data for advertising measurement. Server transport does not bypass ATT.
 
 ## App Settings Deep Link
 
-Apple requires apps to make ATT setting reachable. Add a "Privacy" row in your Settings screen:
+Add a "Privacy" row in your Settings screen so users can find the iOS tracking toggle and your in-app consent controls:
 
 ```swift
 Button("Tracking Settings") {
